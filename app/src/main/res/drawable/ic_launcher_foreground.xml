@@ -3,15 +3,15 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Stacked partition layers -->
+    <!-- Two stacked partition layers -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M36,34 h36 a5,5 0 0 1 5,5 v0 a5,5 0 0 1 -5,5 h-36 a5,5 0 0 1 -5,-5 v0 a5,5 0 0 1 5,-5 z" />
+        android:pathData="M36,27 h36 a5,5 0 0 1 5,5 v0 a5,5 0 0 1 -5,5 h-36 a5,5 0 0 1 -5,-5 v0 a5,5 0 0 1 5,-5 z" />
     <path
-        android:fillColor="#E8ECFF"
-        android:pathData="M36,48 h36 a5,5 0 0 1 5,5 v0 a5,5 0 0 1 -5,5 h-36 a5,5 0 0 1 -5,-5 v0 a5,5 0 0 1 5,-5 z" />
-    <!-- Downward extraction arrow -->
+        android:fillColor="#DCE4FF"
+        android:pathData="M36,41 h36 a5,5 0 0 1 5,5 v0 a5,5 0 0 1 -5,5 h-36 a5,5 0 0 1 -5,-5 v0 a5,5 0 0 1 5,-5 z" />
+    <!-- Bold downward extraction arrow -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M50,63 h8 v9 h7 l-11,12 l-11,-12 h7 z" />
+        android:pathData="M50,55 h8 v15 h8 l-12,14 l-12,-14 h8 z" />
 </vector>

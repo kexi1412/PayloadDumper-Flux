@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,7 +16,6 @@ import androidx.compose.material.icons.rounded.PriorityHigh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -49,12 +49,9 @@ fun PartitionTile(info: PartitionInfo, onExtract: () -> Unit) {
         else -> MaterialTheme.colorScheme.primary
     }
 
-    Surface(
-        shape = RoundedCornerShape(FluxRadius.Inner),
-        color = MaterialTheme.colorScheme.surface,
-    ) {
+    GlassCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(FluxRadius.Inner)) {
         Row(
-            modifier = Modifier.padding(14.dp),
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             LeadingRing(info, progress, ringColor)

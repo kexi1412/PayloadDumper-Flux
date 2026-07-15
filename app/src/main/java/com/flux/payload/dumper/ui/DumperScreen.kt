@@ -16,15 +16,21 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Security
+import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -46,14 +52,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.flux.payload.dumper.data.PathUtil
 import com.flux.payload.dumper.data.Preferences
 import com.flux.payload.dumper.model.ArchiveInfo
-import com.flux.payload.dumper.model.PartitionInfo
 import com.flux.payload.dumper.ui.components.AboutDialog
+import com.flux.payload.dumper.ui.components.FluxBackground
+import com.flux.payload.dumper.ui.components.GlassCard
 import com.flux.payload.dumper.ui.components.GradientFab
 import com.flux.payload.dumper.ui.components.GradientPillButton
 import com.flux.payload.dumper.ui.components.PartitionTile
@@ -61,7 +70,8 @@ import com.flux.payload.dumper.ui.components.PermissionDialog
 import com.flux.payload.dumper.ui.components.RelinkDialog
 import com.flux.payload.dumper.ui.components.SegmentedToggle
 import com.flux.payload.dumper.ui.components.SettingsDialog
-import com.flux.payload.dumper.ui.components.StatStrip
+import com.flux.payload.dumper.ui.components.SummaryData
+import com.flux.payload.dumper.ui.components.SummaryRow
 import com.flux.payload.dumper.ui.components.formatSize
 import com.flux.payload.dumper.ui.theme.FluxRadius
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
@@ -113,52 +123,54 @@ fun DumperScreen(vm: DumperViewModel) {
         if (input.trim().startsWith("http")) vm.parse() else requireStorage { vm.parse() }
     }
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = { FluxTopBar(onSettings = { showSettings = true }, onFolder = { requireStorage { folderPicker.launch(null) } }, onAbout = { showAbout = true }) },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        floatingActionButton = {
-            if (parseState is ParseState.Ready && partitions.isNotEmpty()) {
-                GradientFab(text = "提取全部", icon = Icons.Rounded.Download, onClick = { requireStorage { vm.extractAll() } })
-            }
-        },
-    ) { padding ->
-        LazyColumn(
+    FluxBackground {
+        Scaffold(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = 100.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item {
-                InputHero(
-                    mode = sourceMode,
-                    onModeChange = { sourceMode = it },
-                    value = input,
-                    onValueChange = vm::updateInput,
-                    onBrowse = { requireStorage { filePicker.launch("*/*") } },
-                    parsing = parseState is ParseState.Parsing,
-                    onParse = ::doParse,
-                )
-            }
-
-            when (val st = parseState) {
-                is ParseState.Ready -> {
-                    item { OtaSummary(st.archive) }
-                    item {
-                        Text(
-                            "镜像 · ${partitions.size}",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.padding(start = 4.dp, top = 4.dp),
-                        )
-                    }
-                    item { SearchField(search, vm::updateSearch) }
-                    items(partitions, key = { it.partitionName }) { p ->
-                        PartitionTile(info = p, onExtract = { requireStorage { vm.extract(p.partitionName) } })
-                    }
+            containerColor = Color.Transparent,
+            topBar = { FluxTopBar(onSettings = { showSettings = true }, onFolder = { requireStorage { folderPicker.launch(null) } }, onAbout = { showAbout = true }) },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            floatingActionButton = {
+                if (parseState is ParseState.Ready && partitions.isNotEmpty()) {
+                    GradientFab(text = "提取全部", icon = Icons.Rounded.Download, onClick = { requireStorage { vm.extractAll() } })
                 }
-                is ParseState.Failed -> item { ErrorCard(st.message) }
-                else -> {}
+            },
+        ) { padding ->
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = 100.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                item {
+                    InputHero(
+                        mode = sourceMode,
+                        onModeChange = { sourceMode = it },
+                        value = input,
+                        onValueChange = vm::updateInput,
+                        onBrowse = { requireStorage { filePicker.launch("*/*") } },
+                        parsing = parseState is ParseState.Parsing,
+                        onParse = ::doParse,
+                    )
+                }
+
+                when (val st = parseState) {
+                    is ParseState.Ready -> {
+                        item { OtaSummary(st.archive) }
+                        item {
+                            Text(
+                                "镜像 · ${partitions.size}",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.padding(start = 4.dp, top = 4.dp),
+                            )
+                        }
+                        item { SearchField(search, vm::updateSearch) }
+                        items(partitions, key = { it.partitionName }) { p ->
+                            PartitionTile(info = p, onExtract = { requireStorage { vm.extract(p.partitionName) } })
+                        }
+                    }
+                    is ParseState.Failed -> item { ErrorCard(st.message) }
+                    else -> {}
+                }
             }
         }
     }
@@ -180,15 +192,31 @@ private fun FluxTopBar(onSettings: () -> Unit, onFolder: () -> Unit, onAbout: ()
     var menu by remember { mutableStateOf(false) }
     Box(
         modifier = Modifier.fillMaxWidth().background(flux.glass).statusBarsPadding()
-            .padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+            .padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text(
-                "Payload Dumper",
-                style = MaterialTheme.typography.displaySmall,
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.weight(1f),
-            )
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Brush.linearGradient(listOf(flux.gradientStart, flux.gradientEnd))),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.Layers, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "OTA Flux",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Text(
+                    "A/B OTA 分区提取",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Box {
                 IconButton(onClick = { menu = true }) {
                     Icon(Icons.Rounded.MoreVert, contentDescription = "菜单", tint = MaterialTheme.colorScheme.onBackground)
@@ -213,11 +241,7 @@ private fun InputHero(
     parsing: Boolean,
     onParse: () -> Unit,
 ) {
-    androidx.compose.material3.Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(FluxRadius.Card),
-        color = MaterialTheme.colorScheme.surface,
-    ) {
+    GlassCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(FluxRadius.Card)) {
         val browseIcon: (@Composable () -> Unit)? = if (mode == 0) {
             { IconButton(onClick = onBrowse) { Icon(Icons.Rounded.FolderOpen, contentDescription = "浏览") } }
         } else {
@@ -250,20 +274,26 @@ private fun InputHero(
 
 @Composable
 private fun OtaSummary(info: ArchiveInfo) {
+    val flux = LocalFluxColors.current
     Column {
         Text(
             info.fileName,
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(start = 4.dp, bottom = 12.dp),
+            modifier = Modifier.padding(start = 4.dp),
         )
-        StatStrip(
-            chips = listOf(
-                "文件大小" to formatSize(info.fileSize),
-                "安全补丁" to info.securityPatchLevel,
-                "分区数" to "${info.partitionCount}",
-                "块大小" to "${info.blockSize} B",
-            )
+        Text(
+            "块大小 ${info.blockSize} B",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 12.dp),
+        )
+        SummaryRow(
+            cards = listOf(
+                SummaryData(Icons.Rounded.Storage, "文件大小", formatSize(info.fileSize), MaterialTheme.colorScheme.primary),
+                SummaryData(Icons.Rounded.Security, "安全补丁", info.securityPatchLevel.ifBlank { "—" }, flux.success),
+                SummaryData(Icons.Rounded.Dns, "分区数", "${info.partitionCount}", flux.gradientStart),
+            ),
         )
     }
 }
@@ -289,11 +319,7 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit) {
 
 @Composable
 private fun ErrorCard(message: String) {
-    androidx.compose.material3.Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(FluxRadius.Card),
-        color = MaterialTheme.colorScheme.surface,
-    ) {
+    GlassCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(FluxRadius.Card)) {
         Column(Modifier.padding(20.dp)) {
             Text("解析失败", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
             Spacer(Modifier.height(6.dp))

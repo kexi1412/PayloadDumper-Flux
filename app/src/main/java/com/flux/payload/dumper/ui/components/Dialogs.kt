@@ -1,5 +1,8 @@
 package com.flux.payload.dumper.ui.components
 
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -9,7 +12,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.OpenInNew
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -22,6 +30,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -29,6 +39,9 @@ import androidx.compose.ui.window.DialogProperties
 import com.flux.payload.dumper.BuildConfig
 import com.flux.payload.dumper.core.Net
 import com.flux.payload.dumper.data.Preferences
+
+private const val REPO_URL = "https://github.com/kexi1412/PayloadDumper-Flux"
+private const val AUTHOR = "kexi1412"
 
 /** Base ColorOS-style centered dialog surface. */
 @Composable
@@ -94,10 +107,15 @@ private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
 
 @Composable
 fun AboutDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
     FluxDialog(onDismiss = onDismiss) {
-        Text("Payload Dumper Flux", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+        Text("OTA Flux", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
         Spacer(Modifier.height(4.dp))
-        Text("版本 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "版本 ${BuildConfig.VERSION_NAME} · 作者 $AUTHOR",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Spacer(Modifier.height(14.dp))
         Text(
             "从 Android A/B (payload.bin) 全量 OTA 中并行提取分区镜像。\n" +
@@ -106,7 +124,17 @@ fun AboutDialog(onDismiss: () -> Unit) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(16.dp))
+        LinkRow(
+            title = "项目主页",
+            subtitle = "github.com/$AUTHOR/PayloadDumper-Flux",
+            onClick = {
+                runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(REPO_URL)))
+                }
+            },
+        )
+        Spacer(Modifier.height(16.dp))
         Text("致谢", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
         Spacer(Modifier.height(4.dp))
         Text(
@@ -118,6 +146,38 @@ fun AboutDialog(onDismiss: () -> Unit) {
         )
         Spacer(Modifier.height(20.dp))
         GradientPillButton(text = "好的", onClick = onDismiss)
+    }
+}
+
+/** A tappable row that opens an external link in the browser. */
+@Composable
+private fun LinkRow(title: String, subtitle: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Icon(
+            Icons.Rounded.OpenInNew,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 
