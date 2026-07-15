@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Stacked partition layers -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M36,34 h36 a5,5 0 0 1 5,5 v0 a5,5 0 0 1 -5,5 h-36 a5,5 0 0 1 -5,-5 v0 a5,5 0 0 1 5,-5 z" />
+    <path
+        android:fillColor="#E8ECFF"
+        android:pathData="M36,48 h36 a5,5 0 0 1 5,5 v0 a5,5 0 0 1 -5,5 h-36 a5,5 0 0 1 -5,-5 v0 a5,5 0 0 1 5,-5 z" />
+    <!-- Downward extraction arrow -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M50,63 h8 v9 h7 l-11,12 l-11,-12 h7 z" />
+</vector>
