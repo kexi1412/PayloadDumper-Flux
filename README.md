@@ -67,9 +67,12 @@ ui/       ColorOS 16 Flux 主题 + 组件 + 主界面
 
 ## 致谢
 
+- **xyiguanle** —— payload 分析源码，引擎解析逻辑深受其启发
+- **[rcmiku/Payload-Dumper-Compose](https://github.com/rcmiku/Payload-Dumper-Compose)** —— 前身项目，功能与流程参考
 - 引擎参考：`payload-dumper-c`（线程池 / 无状态源 / extents 分散写）
-- 前身参考：Payload-Dumper-Compose（UI 布局与流程）
 - 依赖：Jetpack Compose、OkHttp、Apache Commons Compress、tukaani-xz、aircompressor、protobuf
+
+UI 布局为本项目自行设计，配色沿用自研 ColorOS 16「Flux」主题。
 
 ## License
 

@@ -101,8 +101,18 @@ fun AboutDialog(onDismiss: () -> Unit) {
         Spacer(Modifier.height(14.dp))
         Text(
             "从 Android A/B (payload.bin) 全量 OTA 中并行提取分区镜像。\n" +
-                "支持本地文件与 OTA 直链，多分区并发提取，提取后 SHA-256 校验。\n" +
-                "界面参考 ColorOS 16 流体设计，引擎参考 payload-dumper-c 重写。",
+                "支持本地文件与 OTA 直链，多分区并发提取，网络断点续传，提取后 SHA-256 校验。\n" +
+                "界面为自研 ColorOS 16「Flux」设计。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(14.dp))
+        Text("致谢", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "· xyiguanle — payload 分析源码\n" +
+                "· rcmiku/Payload-Dumper-Compose — 前身项目\n" +
+                "· payload-dumper-c — 引擎参考",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

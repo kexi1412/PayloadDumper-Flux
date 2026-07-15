@@ -35,51 +35,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 
-/** A ColorOS-style rounded surface card. */
-@Composable
-fun FluxCard(
-    modifier: Modifier = Modifier,
-    padding: PaddingValues = PaddingValues(20.dp),
-    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
-) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(FluxRadius.Card),
-        color = MaterialTheme.colorScheme.surface,
-    ) {
-        Column(modifier = Modifier.padding(padding), content = content)
-    }
-}
-
-/** Section header text ("OTA 信息", "镜像列表"). */
-@Composable
-fun SectionTitle(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.headlineSmall,
-        color = MaterialTheme.colorScheme.onBackground,
-        modifier = modifier.padding(start = 4.dp),
-    )
-}
-
-/** A vertical label / value info block. */
-@Composable
-fun InfoRow(label: String, value: String) {
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(top = 2.dp),
-        )
-    }
-}
-
 /** Primary aurora-gradient pill button with a springy press animation. */
 @Composable
 fun GradientPillButton(
