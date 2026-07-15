@@ -23,8 +23,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.flux.payload.dumper.R
 import com.flux.payload.dumper.model.ExtractState
 import com.flux.payload.dumper.model.PartitionInfo
 import com.flux.payload.dumper.model.VerifyState
@@ -76,9 +78,9 @@ fun PartitionTile(info: PartitionInfo, onExtract: () -> Unit) {
 
             if (!running) {
                 val label = when (info.extractState) {
-                    ExtractState.DONE -> "重新提取"
-                    ExtractState.PAUSED, ExtractState.ERROR -> "续传"
-                    else -> "提取"
+                    ExtractState.DONE -> stringResource(R.string.action_reextract)
+                    ExtractState.PAUSED, ExtractState.ERROR -> stringResource(R.string.action_resume)
+                    else -> stringResource(R.string.action_extract)
                 }
                 TonalPill(text = label, onClick = onExtract)
             }
@@ -108,14 +110,18 @@ private fun LeadingRing(info: PartitionInfo, progress: Float, ringColor: Color) 
     }
 }
 
-private fun subtitleFor(info: PartitionInfo): String = when (info.extractState) {
-    ExtractState.RUNNING -> "${formatSize(info.size)} · 提取中 ${(info.progress * 100).toInt()}%"
-    ExtractState.PAUSED -> "已下 ${(info.progress * 100).toInt()}% · ${info.message.ifBlank { "已暂停" }}"
-    ExtractState.DONE -> when (info.verifyState) {
-        VerifyState.PASSED -> "${formatSize(info.size)} · 校验通过"
-        VerifyState.FAILED -> "${formatSize(info.size)} · 校验失败"
-        else -> "${formatSize(info.size)} · 已提取"
+@Composable
+private fun subtitleFor(info: PartitionInfo): String {
+    val percent = (info.progress * 100).toInt()
+    return when (info.extractState) {
+        ExtractState.RUNNING -> stringResource(R.string.tile_extracting, formatSize(info.size), percent)
+        ExtractState.PAUSED -> stringResource(R.string.tile_paused, percent, info.message.ifBlank { stringResource(R.string.state_paused) })
+        ExtractState.DONE -> when (info.verifyState) {
+            VerifyState.PASSED -> stringResource(R.string.tile_verified, formatSize(info.size))
+            VerifyState.FAILED -> stringResource(R.string.tile_verify_failed, formatSize(info.size))
+            else -> stringResource(R.string.tile_extracted, formatSize(info.size))
+        }
+        ExtractState.ERROR -> info.message.ifBlank { stringResource(R.string.state_extract_failed) }
+        else -> stringResource(R.string.tile_idle, formatSize(info.size), formatSize(info.compressedSize))
     }
-    ExtractState.ERROR -> info.message.ifBlank { "提取失败" }
-    else -> "${formatSize(info.size)} · 压缩 ${formatSize(info.compressedSize)}"
 }

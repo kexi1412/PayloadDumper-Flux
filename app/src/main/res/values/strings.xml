@@ -1,4 +1,86 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- App identity -->
     <string name="app_name">OTA Flux</string>
+    <string name="app_tagline">A/B OTA partition extractor</string>
+
+    <!-- Top bar & menu -->
+    <string name="menu">Menu</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_output_folder">Output folder</string>
+    <string name="action_about">About</string>
+
+    <!-- Input hero -->
+    <string name="source_local">Local file</string>
+    <string name="source_network">Network link</string>
+    <string name="action_browse">Browse</string>
+    <string name="input_hint_local">payload.bin / OTA package path</string>
+    <string name="input_hint_network">Paste OTA direct-link URL</string>
+    <string name="action_parse">Parse</string>
+    <string name="action_parsing">Parsing…</string>
+
+    <!-- Archive summary -->
+    <string name="block_size">Block size %1$d B</string>
+    <string name="summary_file_size">File size</string>
+    <string name="summary_security_patch">Security patch</string>
+    <string name="summary_partitions">Partitions</string>
+    <string name="images_header">Images · %1$d</string>
+    <string name="search_hint">Search partitions</string>
+
+    <!-- Partition tile -->
+    <string name="extract_all">Extract all</string>
+    <string name="action_extract">Extract</string>
+    <string name="action_resume">Resume</string>
+    <string name="action_reextract">Re-extract</string>
+    <string name="tile_extracting">%1$s · Extracting %2$d%%</string>
+    <string name="tile_paused">%1$d%% downloaded · %2$s</string>
+    <string name="tile_verified">%1$s · Verified</string>
+    <string name="tile_verify_failed">%1$s · Verification failed</string>
+    <string name="tile_extracted">%1$s · Extracted</string>
+    <string name="tile_idle">%1$s · Compressed %2$s</string>
+    <string name="state_paused">Paused</string>
+    <string name="state_extract_failed">Extraction failed</string>
+
+    <!-- Parse error card -->
+    <string name="parse_failed">Parse failed</string>
+
+    <!-- Settings dialog -->
+    <string name="settings_title">Download &amp; extraction settings</string>
+    <string name="setting_verify">SHA-256 verify after extraction</string>
+    <string name="setting_custom_ua">Custom User-Agent</string>
+    <string name="label_user_agent">User-Agent</string>
+    <string name="action_done">Done</string>
+
+    <!-- About dialog -->
+    <string name="about_version_author">Version %1$s · by %2$s</string>
+    <string name="about_description">Extract partition images in parallel from a full Android A/B (payload.bin) OTA.\nSupports local files and OTA direct links, concurrent multi-partition extraction, resumable network downloads, and SHA-256 verification after extraction.\nUI is a bespoke ColorOS 16 “Flux” design.</string>
+    <string name="about_link_title">Project home</string>
+    <string name="credits_title">Credits</string>
+    <string name="credits_body">· xyiguanle — payload analysis source\n· rcmiku/Payload-Dumper-Compose — predecessor project\n· payload-dumper-c — engine reference</string>
+    <string name="action_ok">OK</string>
+
+    <!-- Relink dialog -->
+    <string name="relink_title">Link expired</string>
+    <string name="relink_body">Download of partition “%1$s” was interrupted; progress is saved. Paste a new OTA direct link to resume.\nOn submit, it is first verified by SHA-256 to confirm it is the same ROM — it only continues on a match, preventing a mismatched package.</string>
+    <string name="relink_input_label">New OTA direct-link URL</string>
+    <string name="relink_confirm">Verify &amp; resume</string>
+    <string name="action_cancel">Cancel</string>
+
+    <!-- Permission dialog -->
+    <string name="permission_title">File access permission needed</string>
+    <string name="permission_body">Extracting partition images needs “All files access” to write .img files to the download folder. Please grant it in the system settings that follow.</string>
+    <string name="permission_confirm">Grant permission</string>
+
+    <!-- Messages (snackbar / status) -->
+    <string name="msg_input_required">Enter a local path or a link</string>
+    <string name="err_file_unreadable">File not found or unreadable: %1$s</string>
+    <string name="msg_extract_verify_failed">%1$s extracted, but verification failed</string>
+    <string name="msg_link_stalled">Link expired or network interrupted; submit a new link to resume</string>
+    <string name="msg_invalid_http">Enter a valid http(s) link</string>
+    <string name="err_partition_missing">Partition %1$s not found in the new link</string>
+    <string name="err_different_rom">The new link is a different ROM (SHA-256 of partition %1$s differs); blocked to avoid mixing packages</string>
+    <string name="msg_resume_same_rom">Verified as the same ROM; resuming %1$s</string>
+    <string name="msg_relink_failed">Failed to switch link</string>
+    <string name="msg_cancelled_progress_kept">Cancelled (incomplete; progress saved, you can resume)</string>
+    <string name="msg_all_done">All extractions complete</string>
 </resources>

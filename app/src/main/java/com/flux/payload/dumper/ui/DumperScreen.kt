@@ -56,7 +56,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.flux.payload.dumper.R
 import com.flux.payload.dumper.data.PathUtil
 import com.flux.payload.dumper.data.Preferences
 import com.flux.payload.dumper.model.ArchiveInfo
@@ -131,7 +133,7 @@ fun DumperScreen(vm: DumperViewModel) {
             snackbarHost = { SnackbarHost(snackbarHostState) },
             floatingActionButton = {
                 if (parseState is ParseState.Ready && partitions.isNotEmpty()) {
-                    GradientFab(text = "提取全部", icon = Icons.Rounded.Download, onClick = { requireStorage { vm.extractAll() } })
+                    GradientFab(text = stringResource(R.string.extract_all), icon = Icons.Rounded.Download, onClick = { requireStorage { vm.extractAll() } })
                 }
             },
         ) { padding ->
@@ -157,7 +159,7 @@ fun DumperScreen(vm: DumperViewModel) {
                         item { OtaSummary(st.archive) }
                         item {
                             Text(
-                                "镜像 · ${partitions.size}",
+                                stringResource(R.string.images_header, partitions.size),
                                 style = MaterialTheme.typography.titleLarge,
                                 color = MaterialTheme.colorScheme.onBackground,
                                 modifier = Modifier.padding(start = 4.dp, top = 4.dp),
@@ -207,24 +209,24 @@ private fun FluxTopBar(onSettings: () -> Unit, onFolder: () -> Unit, onAbout: ()
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    "OTA Flux",
+                    stringResource(R.string.app_name),
                     style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
                 Text(
-                    "A/B OTA 分区提取",
+                    stringResource(R.string.app_tagline),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Box {
                 IconButton(onClick = { menu = true }) {
-                    Icon(Icons.Rounded.MoreVert, contentDescription = "菜单", tint = MaterialTheme.colorScheme.onBackground)
+                    Icon(Icons.Rounded.MoreVert, contentDescription = stringResource(R.string.menu), tint = MaterialTheme.colorScheme.onBackground)
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(text = { Text("设置") }, onClick = { menu = false; onSettings() })
-                    DropdownMenuItem(text = { Text("输出目录") }, onClick = { menu = false; onFolder() })
-                    DropdownMenuItem(text = { Text("关于") }, onClick = { menu = false; onAbout() })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.action_settings)) }, onClick = { menu = false; onSettings() })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.action_output_folder)) }, onClick = { menu = false; onFolder() })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.action_about)) }, onClick = { menu = false; onAbout() })
                 }
             }
         }
@@ -243,17 +245,17 @@ private fun InputHero(
 ) {
     GlassCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(FluxRadius.Card)) {
         val browseIcon: (@Composable () -> Unit)? = if (mode == 0) {
-            { IconButton(onClick = onBrowse) { Icon(Icons.Rounded.FolderOpen, contentDescription = "浏览") } }
+            { IconButton(onClick = onBrowse) { Icon(Icons.Rounded.FolderOpen, contentDescription = stringResource(R.string.action_browse)) } }
         } else {
             null
         }
         Column(modifier = Modifier.padding(18.dp)) {
-            SegmentedToggle(options = listOf("本地文件", "网络链接"), selectedIndex = mode, onSelect = onModeChange)
+            SegmentedToggle(options = listOf(stringResource(R.string.source_local), stringResource(R.string.source_network)), selectedIndex = mode, onSelect = onModeChange)
             Spacer(Modifier.height(16.dp))
             OutlinedTextField(
                 value = value,
                 onValueChange = onValueChange,
-                placeholder = { Text(if (mode == 0) "payload.bin / OTA 包路径" else "粘贴 OTA 直链 URL") },
+                placeholder = { Text(stringResource(if (mode == 0) R.string.input_hint_local else R.string.input_hint_network)) },
                 trailingIcon = browseIcon,
                 singleLine = false,
                 maxLines = 3,
@@ -267,7 +269,7 @@ private fun InputHero(
                 ),
             )
             Spacer(Modifier.height(16.dp))
-            GradientPillButton(text = if (parsing) "解析中…" else "解析", onClick = onParse, enabled = !parsing)
+            GradientPillButton(text = stringResource(if (parsing) R.string.action_parsing else R.string.action_parse), onClick = onParse, enabled = !parsing)
         }
     }
 }
@@ -283,7 +285,7 @@ private fun OtaSummary(info: ArchiveInfo) {
             modifier = Modifier.padding(start = 4.dp),
         )
         Text(
-            "块大小 ${info.blockSize} B",
+            stringResource(R.string.block_size, info.blockSize),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 12.dp),
@@ -291,9 +293,9 @@ private fun OtaSummary(info: ArchiveInfo) {
         // 信息卡固定用蓝/绿/橙三色,让这排始终是彩色的,不随主色变单调。
         SummaryRow(
             cards = listOf(
-                SummaryData(Icons.Rounded.Storage, "文件大小", formatSize(info.fileSize), Color(0xFF3B82F6)),
-                SummaryData(Icons.Rounded.Security, "安全补丁", info.securityPatchLevel.ifBlank { "—" }, flux.success),
-                SummaryData(Icons.Rounded.Dns, "分区数", "${info.partitionCount}", Color(0xFFF59E0B)),
+                SummaryData(Icons.Rounded.Storage, stringResource(R.string.summary_file_size), formatSize(info.fileSize), Color(0xFF3B82F6)),
+                SummaryData(Icons.Rounded.Security, stringResource(R.string.summary_security_patch), info.securityPatchLevel.ifBlank { "—" }, flux.success),
+                SummaryData(Icons.Rounded.Dns, stringResource(R.string.summary_partitions), "${info.partitionCount}", Color(0xFFF59E0B)),
             ),
         )
     }
@@ -304,7 +306,7 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        placeholder = { Text("搜索分区") },
+        placeholder = { Text(stringResource(R.string.search_hint)) },
         leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
         singleLine = true,
         shape = RoundedCornerShape(FluxRadius.Pill),
@@ -322,7 +324,7 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit) {
 private fun ErrorCard(message: String) {
     GlassCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(FluxRadius.Card)) {
         Column(Modifier.padding(20.dp)) {
-            Text("解析失败", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
+            Text(stringResource(R.string.parse_failed), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
             Spacer(Modifier.height(6.dp))
             Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

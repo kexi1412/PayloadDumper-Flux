@@ -1,4 +1,86 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- App identity -->
     <string name="app_name">OTA 提取器</string>
+    <string name="app_tagline">A/B OTA 分区提取</string>
+
+    <!-- Top bar & menu -->
+    <string name="menu">菜单</string>
+    <string name="action_settings">设置</string>
+    <string name="action_output_folder">输出目录</string>
+    <string name="action_about">关于</string>
+
+    <!-- Input hero -->
+    <string name="source_local">本地文件</string>
+    <string name="source_network">网络链接</string>
+    <string name="action_browse">浏览</string>
+    <string name="input_hint_local">payload.bin / OTA 包路径</string>
+    <string name="input_hint_network">粘贴 OTA 直链 URL</string>
+    <string name="action_parse">解析</string>
+    <string name="action_parsing">解析中…</string>
+
+    <!-- Archive summary -->
+    <string name="block_size">块大小 %1$d B</string>
+    <string name="summary_file_size">文件大小</string>
+    <string name="summary_security_patch">安全补丁</string>
+    <string name="summary_partitions">分区数</string>
+    <string name="images_header">镜像 · %1$d</string>
+    <string name="search_hint">搜索分区</string>
+
+    <!-- Partition tile -->
+    <string name="extract_all">提取全部</string>
+    <string name="action_extract">提取</string>
+    <string name="action_resume">续传</string>
+    <string name="action_reextract">重新提取</string>
+    <string name="tile_extracting">%1$s · 提取中 %2$d%%</string>
+    <string name="tile_paused">已下 %1$d%% · %2$s</string>
+    <string name="tile_verified">%1$s · 校验通过</string>
+    <string name="tile_verify_failed">%1$s · 校验失败</string>
+    <string name="tile_extracted">%1$s · 已提取</string>
+    <string name="tile_idle">%1$s · 压缩 %2$s</string>
+    <string name="state_paused">已暂停</string>
+    <string name="state_extract_failed">提取失败</string>
+
+    <!-- Parse error card -->
+    <string name="parse_failed">解析失败</string>
+
+    <!-- Settings dialog -->
+    <string name="settings_title">下载与提取设置</string>
+    <string name="setting_verify">提取后 SHA-256 校验</string>
+    <string name="setting_custom_ua">自定义 User-Agent</string>
+    <string name="label_user_agent">User-Agent</string>
+    <string name="action_done">完成</string>
+
+    <!-- About dialog -->
+    <string name="about_version_author">版本 %1$s · 作者 %2$s</string>
+    <string name="about_description">从 Android A/B (payload.bin) 全量 OTA 中并行提取分区镜像。\n支持本地文件与 OTA 直链，多分区并发提取，网络断点续传，提取后 SHA-256 校验。\n界面为自研 ColorOS 16「Flux」设计。</string>
+    <string name="about_link_title">项目主页</string>
+    <string name="credits_title">致谢</string>
+    <string name="credits_body">· xyiguanle — payload 分析源码\n· rcmiku/Payload-Dumper-Compose — 前身项目\n· payload-dumper-c — 引擎参考</string>
+    <string name="action_ok">好的</string>
+
+    <!-- Relink dialog -->
+    <string name="relink_title">链接已失效</string>
+    <string name="relink_body">分区「%1$s」下载中断，进度已保留。请粘贴一个新的 OTA 直链继续续传。\n提交后会先用 SHA-256 校验它是否为同一个 ROM，一致才会接着下，避免不同链接混包。</string>
+    <string name="relink_input_label">新的 OTA 直链 URL</string>
+    <string name="relink_confirm">校验并续传</string>
+    <string name="action_cancel">取消</string>
+
+    <!-- Permission dialog -->
+    <string name="permission_title">需要文件访问权限</string>
+    <string name="permission_body">提取分区镜像需要「所有文件访问权限」，用于把 .img 写入下载目录。请在接下来的系统设置中授予。</string>
+    <string name="permission_confirm">去授权</string>
+
+    <!-- Messages (snackbar / status) -->
+    <string name="msg_input_required">请输入本地路径或链接</string>
+    <string name="err_file_unreadable">文件不存在或不可读：%1$s</string>
+    <string name="msg_extract_verify_failed">%1$s 提取完成，但校验未通过</string>
+    <string name="msg_link_stalled">链接失效或网络中断，请提交新链接续传</string>
+    <string name="msg_invalid_http">请填写有效的 http(s) 链接</string>
+    <string name="err_partition_missing">新链接中不存在分区 %1$s</string>
+    <string name="err_different_rom">新链接不是同一个 ROM（分区 %1$s 的 SHA-256 不一致），已阻止以防混包</string>
+    <string name="msg_resume_same_rom">已校验为同一 ROM，继续续传 %1$s</string>
+    <string name="msg_relink_failed">换链接失败</string>
+    <string name="msg_cancelled_progress_kept">已取消（未完成，进度已保留，可重新提取续传）</string>
+    <string name="msg_all_done">全部提取完成</string>
 </resources>

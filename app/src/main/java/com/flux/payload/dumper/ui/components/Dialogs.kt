@@ -32,11 +32,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.flux.payload.dumper.BuildConfig
+import com.flux.payload.dumper.R
 import com.flux.payload.dumper.core.Net
 import com.flux.payload.dumper.data.Preferences
 
@@ -70,18 +72,18 @@ fun SettingsDialog(onDismiss: () -> Unit) {
     }
 
     FluxDialog(onDismiss = { save(); onDismiss() }) {
-        Text("下载与提取设置", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+        Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
         Spacer(Modifier.height(16.dp))
 
-        ToggleRow("提取后 SHA-256 校验", verify) { verify = it }
+        ToggleRow(stringResource(R.string.setting_verify), verify) { verify = it }
         Spacer(Modifier.height(8.dp))
-        ToggleRow("自定义 User-Agent", uaEnabled) { uaEnabled = it }
+        ToggleRow(stringResource(R.string.setting_custom_ua), uaEnabled) { uaEnabled = it }
 
         if (uaEnabled) {
             Spacer(Modifier.height(10.dp))
             OutlinedTextField(
                 value = ua, onValueChange = { ua = it },
-                label = { Text("User-Agent") },
+                label = { Text(stringResource(R.string.label_user_agent)) },
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth(),
@@ -89,7 +91,7 @@ fun SettingsDialog(onDismiss: () -> Unit) {
         }
 
         Spacer(Modifier.height(20.dp))
-        GradientPillButton(text = "完成", onClick = { save(); onDismiss() })
+        GradientPillButton(text = stringResource(R.string.action_done), onClick = { save(); onDismiss() })
     }
 }
 
@@ -109,24 +111,22 @@ private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
 fun AboutDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     FluxDialog(onDismiss = onDismiss) {
-        Text("OTA Flux", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+        Text(stringResource(R.string.app_name), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
         Spacer(Modifier.height(4.dp))
         Text(
-            "版本 ${BuildConfig.VERSION_NAME} · 作者 $AUTHOR",
+            stringResource(R.string.about_version_author, BuildConfig.VERSION_NAME, AUTHOR),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(14.dp))
         Text(
-            "从 Android A/B (payload.bin) 全量 OTA 中并行提取分区镜像。\n" +
-                "支持本地文件与 OTA 直链，多分区并发提取，网络断点续传，提取后 SHA-256 校验。\n" +
-                "界面为自研 ColorOS 16「Flux」设计。",
+            stringResource(R.string.about_description),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(16.dp))
         LinkRow(
-            title = "项目主页",
+            title = stringResource(R.string.about_link_title),
             subtitle = "github.com/$AUTHOR/PayloadDumper-Flux",
             onClick = {
                 runCatching {
@@ -135,17 +135,15 @@ fun AboutDialog(onDismiss: () -> Unit) {
             },
         )
         Spacer(Modifier.height(16.dp))
-        Text("致谢", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
+        Text(stringResource(R.string.credits_title), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
         Spacer(Modifier.height(4.dp))
         Text(
-            "· xyiguanle — payload 分析源码\n" +
-                "· rcmiku/Payload-Dumper-Compose — 前身项目\n" +
-                "· payload-dumper-c — 引擎参考",
+            stringResource(R.string.credits_body),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(20.dp))
-        GradientPillButton(text = "好的", onClick = onDismiss)
+        GradientPillButton(text = stringResource(R.string.action_ok), onClick = onDismiss)
     }
 }
 
@@ -199,28 +197,27 @@ fun RelinkDialog(
     ) {
         Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(24.dp)) {
-                Text("链接已失效", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+                Text(stringResource(R.string.relink_title), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "分区「$partitionName」下载中断，进度已保留。请粘贴一个新的 OTA 直链继续续传。\n" +
-                        "提交后会先用 SHA-256 校验它是否为同一个 ROM，一致才会接着下，避免不同链接混包。",
+                    stringResource(R.string.relink_body, partitionName),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
                     value = url, onValueChange = { url = it },
-                    label = { Text("新的 OTA 直链 URL") },
+                    label = { Text(stringResource(R.string.relink_input_label)) },
                     singleLine = true,
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(20.dp))
-                GradientPillButton(text = "校验并续传", onClick = { onSubmit(url) }, enabled = url.isNotBlank())
+                GradientPillButton(text = stringResource(R.string.relink_confirm), onClick = { onSubmit(url) }, enabled = url.isNotBlank())
                 Spacer(Modifier.height(10.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     Text(
-                        "取消",
+                        stringResource(R.string.action_cancel),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(8.dp).clickable { onCancel() },
@@ -234,14 +231,14 @@ fun RelinkDialog(
 @Composable
 fun PermissionDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
     FluxDialog(onDismiss = onDismiss) {
-        Text("需要文件访问权限", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+        Text(stringResource(R.string.permission_title), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
         Spacer(Modifier.height(12.dp))
         Text(
-            "提取分区镜像需要「所有文件访问权限」，用于把 .img 写入下载目录。请在接下来的系统设置中授予。",
+            stringResource(R.string.permission_body),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(20.dp))
-        GradientPillButton(text = "去授权", onClick = onConfirm)
+        GradientPillButton(text = stringResource(R.string.permission_confirm), onClick = onConfirm)
     }
 }

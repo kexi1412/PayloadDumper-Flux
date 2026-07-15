@@ -1,9 +1,12 @@
 package com.flux.payload.dumper.viewmodel
 
 import android.os.Environment
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import chromeos_update_engine.UpdateMetadata.PartitionUpdate
+import com.flux.payload.dumper.DumperApplication
+import com.flux.payload.dumper.R
 import com.flux.payload.dumper.core.FileSource
 import com.flux.payload.dumper.core.HttpSource
 import com.flux.payload.dumper.core.Net
@@ -82,9 +85,13 @@ class DumperViewModel : ViewModel() {
 
     fun consumeSnackbar() { _snackbar.value = null }
 
+    /** Resolve a localized string against the app context, so status/error messages follow the UI language. */
+    private fun str(@StringRes resId: Int, vararg args: Any): String =
+        DumperApplication.appContext.getString(resId, *args)
+
     fun parse() {
         val raw = _input.value.trim()
-        if (raw.isEmpty()) { _snackbar.value = "请输入本地路径或链接"; return }
+        if (raw.isEmpty()) { _snackbar.value = str(R.string.msg_input_required); return }
         _parseState.value = ParseState.Parsing
         viewModelScope.launch {
             runCatching {
@@ -94,7 +101,7 @@ class DumperViewModel : ViewModel() {
                         HttpSource.open(raw, client)
                     } else {
                         val f = File(raw)
-                        if (!f.exists() || !f.canRead()) throw java.io.IOException("文件不存在或不可读: $raw")
+                        if (!f.exists() || !f.canRead()) throw java.io.IOException(str(R.string.err_file_unreadable, raw))
                         FileSource(f)
                     }
                     val parsed = PayloadParser.parse(src)
@@ -116,8 +123,8 @@ class DumperViewModel : ViewModel() {
                     )
                 )
             }.onFailure { e ->
-                _parseState.value = ParseState.Failed(e.message ?: "解析失败")
-                _snackbar.value = e.message ?: "解析失败"
+                _parseState.value = ParseState.Failed(e.message ?: str(R.string.parse_failed))
+                _snackbar.value = e.message ?: str(R.string.parse_failed)
             }
         }
     }
@@ -147,17 +154,17 @@ class DumperViewModel : ViewModel() {
                 }
                 update(partitionName) { it.copy(extractState = ExtractState.DONE, progress = 1f, verifyState = vState) }
                 resumeStates.remove(partitionName)
-                if (result.verified == false) _snackbar.value = "$partitionName 提取完成，但校验未通过"
+                if (result.verified == false) _snackbar.value = str(R.string.msg_extract_verify_failed, partitionName)
             }.onFailure { e ->
                 // A network read that died on a remote source is almost always an expired/broken OTA
                 // link. Keep the partial output + resume state and ask the user for a fresh link.
                 if (source is HttpSource && e is IOException) {
                     update(partitionName) {
-                        it.copy(extractState = ExtractState.PAUSED, message = "链接失效或网络中断，请提交新链接续传")
+                        it.copy(extractState = ExtractState.PAUSED, message = str(R.string.msg_link_stalled))
                     }
                     _relink.value = partitionName
                 } else {
-                    update(partitionName) { it.copy(extractState = ExtractState.ERROR, message = e.message ?: "提取失败") }
+                    update(partitionName) { it.copy(extractState = ExtractState.ERROR, message = e.message ?: str(R.string.state_extract_failed)) }
                     _snackbar.value = "$partitionName: ${e.message}"
                 }
             }
@@ -175,7 +182,7 @@ class DumperViewModel : ViewModel() {
         val name = _relink.value ?: return
         val url = newUrl.trim()
         if (!(url.startsWith("http://") || url.startsWith("https://"))) {
-            _snackbar.value = "请填写有效的 http(s) 链接"; return
+            _snackbar.value = str(R.string.msg_invalid_http); return
         }
         viewModelScope.launch {
             runCatching {
@@ -183,12 +190,12 @@ class DumperViewModel : ViewModel() {
                     val newSrc = HttpSource.open(url, client)
                     val newPl = PayloadParser.parse(newSrc)
                     val newPart = newPl.manifest.partitionsList.firstOrNull { it.partitionName == name }
-                        ?: throw IOException("新链接中不存在分区 $name")
+                        ?: throw IOException(str(R.string.err_partition_missing, name))
                     val expected = _partitions.value.firstOrNull { it.partitionName == name }?.sha256.orEmpty()
                     val fresh = if (newPart.hasNewPartitionInfo()) newPart.newPartitionInfo.hash.toHex() else ""
                     if (expected.isNotEmpty() && fresh.isNotEmpty() && expected != fresh) {
                         newSrc.close()
-                        throw IOException("新链接不是同一个 ROM（分区 $name 的 SHA-256 不一致），已阻止以防混包")
+                        throw IOException(str(R.string.err_different_rom, name))
                     }
                     runCatching { source?.close() }
                     source = newSrc
@@ -196,10 +203,10 @@ class DumperViewModel : ViewModel() {
                 }
             }.onSuccess {
                 _relink.value = null
-                _snackbar.value = "已校验为同一 ROM，继续续传 $name"
+                _snackbar.value = str(R.string.msg_resume_same_rom, name)
                 extract(name) // resumes: completed ops are skipped via the retained ResumeState
             }.onFailure { e ->
-                _snackbar.value = e.message ?: "换链接失败"
+                _snackbar.value = e.message ?: str(R.string.msg_relink_failed)
             }
         }
     }
@@ -208,7 +215,7 @@ class DumperViewModel : ViewModel() {
     fun cancelRelink() {
         val name = _relink.value ?: return
         _relink.value = null
-        update(name) { it.copy(extractState = ExtractState.ERROR, message = "已取消（未完成，进度已保留，可重新提取续传）") }
+        update(name) { it.copy(extractState = ExtractState.ERROR, message = str(R.string.msg_cancelled_progress_kept)) }
     }
 
     fun extractAll() {
@@ -222,7 +229,7 @@ class DumperViewModel : ViewModel() {
                 // remaining partition would fail on the same dead link.
                 if (_relink.value != null) return@launch
             }
-            _snackbar.value = "全部提取完成"
+            _snackbar.value = str(R.string.msg_all_done)
         }
     }
 
