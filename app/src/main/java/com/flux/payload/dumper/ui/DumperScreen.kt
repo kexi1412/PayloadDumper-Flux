@@ -288,11 +288,12 @@ private fun OtaSummary(info: ArchiveInfo) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 12.dp),
         )
+        // 信息卡固定用蓝/绿/橙三色,让这排始终是彩色的,不随主色变单调。
         SummaryRow(
             cards = listOf(
-                SummaryData(Icons.Rounded.Storage, "文件大小", formatSize(info.fileSize), MaterialTheme.colorScheme.primary),
+                SummaryData(Icons.Rounded.Storage, "文件大小", formatSize(info.fileSize), Color(0xFF3B82F6)),
                 SummaryData(Icons.Rounded.Security, "安全补丁", info.securityPatchLevel.ifBlank { "—" }, flux.success),
-                SummaryData(Icons.Rounded.Dns, "分区数", "${info.partitionCount}", flux.gradientStart),
+                SummaryData(Icons.Rounded.Dns, "分区数", "${info.partitionCount}", Color(0xFFF59E0B)),
             ),
         )
     }
