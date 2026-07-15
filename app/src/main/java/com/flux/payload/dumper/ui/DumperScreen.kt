@@ -23,10 +23,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.DataUsage
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FolderOpen
-import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Security
@@ -202,7 +202,7 @@ private fun FluxTopBar(onSettings: () -> Unit, onFolder: () -> Unit, onAbout: ()
                     .background(Brush.linearGradient(listOf(flux.gradientStart, flux.gradientEnd))),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Rounded.Layers, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+                Icon(Icons.Rounded.DataUsage, contentDescription = null, tint = Color.White, modifier = Modifier.size(23.dp))
             }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {

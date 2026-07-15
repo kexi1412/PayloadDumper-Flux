@@ -10,9 +10,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -38,6 +40,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.flux.payload.dumper.ui.theme.FluxRadius
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
 
@@ -126,23 +129,24 @@ fun SegmentedToggle(
  */
 @Composable
 fun RowScope.SummaryCard(icon: ImageVector, label: String, value: String, accent: Color) {
-    GlassCard(modifier = Modifier.weight(1f), shape = RoundedCornerShape(FluxRadius.Inner)) {
-        Column(modifier = Modifier.padding(14.dp)) {
+    GlassCard(modifier = Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(FluxRadius.Inner)) {
+        Column(modifier = Modifier.padding(13.dp)) {
             Box(
                 modifier = Modifier
-                    .size(34.dp)
-                    .clip(RoundedCornerShape(11.dp))
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(accent.copy(alpha = 0.14f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(19.dp))
+                Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(18.dp))
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(11.dp))
+            // 值字号收小并允许折两行：像 "2025-06-05" 这样的安全补丁日期在 1/3 宽的卡里也能完整显示。
             Text(
                 value,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp, lineHeight = 18.sp),
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(2.dp))
@@ -157,11 +161,11 @@ fun RowScope.SummaryCard(icon: ImageVector, label: String, value: String, accent
     }
 }
 
-/** The row of three summary cards. */
+/** The row of three summary cards — [IntrinsicSize.Max] keeps all three the same height even when one value wraps. */
 @Composable
 fun SummaryRow(cards: List<SummaryData>, modifier: Modifier = Modifier) {
     Row(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().height(IntrinsicSize.Max),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         cards.forEach { SummaryCard(it.icon, it.label, it.value, it.accent) }

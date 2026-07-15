@@ -3,15 +3,38 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Two stacked partition layers -->
+    <!-- Segmented partition ring: three arcs (one highlighted) via trimPath on a stroked circle -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M36,27 h36 a5,5 0 0 1 5,5 v0 a5,5 0 0 1 -5,5 h-36 a5,5 0 0 1 -5,-5 v0 a5,5 0 0 1 5,-5 z" />
+        android:pathData="M54,32 A22,22 0 1 1 54,76 A22,22 0 1 1 54,32"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:trimPathStart="0.02"
+        android:trimPathEnd="0.30" />
     <path
-        android:fillColor="#DCE4FF"
-        android:pathData="M36,41 h36 a5,5 0 0 1 5,5 v0 a5,5 0 0 1 -5,5 h-36 a5,5 0 0 1 -5,-5 v0 a5,5 0 0 1 5,-5 z" />
-    <!-- Bold downward extraction arrow -->
+        android:pathData="M54,32 A22,22 0 1 1 54,76 A22,22 0 1 1 54,32"
+        android:strokeColor="#CBD8FF"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:trimPathStart="0.36"
+        android:trimPathEnd="0.64" />
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M50,55 h8 v15 h8 l-12,14 l-12,-14 h8 z" />
+        android:pathData="M54,32 A22,22 0 1 1 54,76 A22,22 0 1 1 54,32"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:trimPathStart="0.70"
+        android:trimPathEnd="0.98" />
+    <!-- Center extraction arrow -->
+    <path
+        android:pathData="M54,44 L54,55"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M48.5,49.5 L54,55 L59.5,49.5"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 </vector>
