@@ -2,7 +2,6 @@ package com.flux.payload.dumper.ui.components
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -10,19 +9,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -33,56 +31,98 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.flux.payload.dumper.ui.theme.FluxRadius
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
 
 /**
- * Full-screen pastel wash that sits behind everything and gives the redesign its
- * ColorOS-16 glassmorphism feel: a soft glow bleeding down from the status bar plus
- * a lavender blob tucked into the top corner. Frosted cards float on top of it.
+ * ColorOS-16 card list background: a flat pastel-grey wash (coui_color_background_with_card).
+ * The redesign drops the old glassmorphism aurora in favour of the OS's plain surface so the
+ * white grouped cards read as native Settings groups.
  */
 @Composable
 fun FluxBackground(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
-    val flux = LocalFluxColors.current
-    Box(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        Box(
-            Modifier.fillMaxWidth().height(460.dp).align(Alignment.TopCenter)
-                .background(Brush.verticalGradient(listOf(flux.auroraTop, Color.Transparent))),
-        )
-        Box(
-            Modifier.size(320.dp).align(Alignment.TopEnd).offset(x = 70.dp, y = (-60).dp)
-                .background(Brush.radialGradient(listOf(flux.auroraBlob, Color.Transparent))),
-        )
-        content()
-    }
-}
-
-/** Frosted translucent card — the surface primitive the whole redesign is built on. */
-@Composable
-fun GlassCard(
-    modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(FluxRadius.Card),
-    content: @Composable BoxScope.() -> Unit,
-) {
-    val flux = LocalFluxColors.current
     Box(
-        modifier = modifier
-            .clip(shape)
-            .background(flux.glassCard)
-            .border(1.dp, flux.glassStroke, shape),
+        modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
         content = content,
     )
 }
 
-/** Pill-shaped segmented control (e.g. 本地文件 | 网络链接). */
+/**
+ * A rounded white group card — the primitive the whole list is built from. Children are stacked
+ * in a Column; use [RowDivider] between rows to get ColorOS's inset hairlines.
+ */
+@Composable
+fun CardGroup(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    val flux = LocalFluxColors.current
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(FluxRadius.Card))
+            .background(flux.card),
+        content = content,
+    )
+}
+
+/** Inset hairline divider between rows inside a [CardGroup] (coui_color_divider). */
+@Composable
+fun RowDivider(startInset: Dp = 20.dp, endInset: Dp = 0.dp) {
+    val flux = LocalFluxColors.current
+    HorizontalDivider(
+        modifier = Modifier.padding(start = startInset, end = endInset),
+        thickness = 1.dp,
+        color = flux.divider,
+    )
+}
+
+/** Small grey caption sitting above a card group (support_preference_category_title_size 12 sp). */
+@Composable
+fun CategoryHeader(text: String, modifier: Modifier = Modifier) {
+    val flux = LocalFluxColors.current
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = flux.labelSecondary,
+        modifier = modifier.padding(start = 24.dp, end = 24.dp, top = 18.dp, bottom = 8.dp),
+    )
+}
+
+/** Label-left / value-right info row (device-info style), used for the OTA summary. */
+@Composable
+fun InfoRow(
+    label: String,
+    value: String,
+    valueColor: Color = LocalFluxColors.current.labelSecondary,
+) {
+    val flux = LocalFluxColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.titleMedium,
+            color = flux.labelPrimary,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = valueColor,
+            textAlign = TextAlign.End,
+        )
+    }
+}
+
+/** ColorOS segmented control (COUITabView): grey track with a white sliding thumb. */
 @Composable
 fun SegmentedToggle(
     options: List<String>,
@@ -90,93 +130,37 @@ fun SegmentedToggle(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val flux = LocalFluxColors.current
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(FluxRadius.Pill))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+            .clip(RoundedCornerShape(10.dp))
+            .background(flux.fieldBg)
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         options.forEachIndexed { i, label ->
             val selected = i == selectedIndex
-            val bg by animateColorAsState(
-                if (selected) MaterialTheme.colorScheme.surface else Color.Transparent,
-                label = "segbg",
-            )
-            val fg by animateColorAsState(
-                if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                label = "segfg",
-            )
+            val bg by animateColorAsState(if (selected) flux.card else Color.Transparent, label = "segbg")
+            val fg by animateColorAsState(if (selected) flux.accent else flux.labelSecondary, label = "segfg")
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .clip(RoundedCornerShape(FluxRadius.Pill))
+                    .clip(RoundedCornerShape(8.dp))
                     .background(bg)
                     .clickable { onSelect(i) }
-                    .padding(vertical = 10.dp),
+                    .padding(vertical = 9.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(label, style = MaterialTheme.typography.labelLarge, color = fg)
+                Text(label, style = MaterialTheme.typography.labelSmall, color = fg)
             }
         }
     }
 }
 
-/**
- * One of the three headline summary cards (File Size / Security Patch / Partitions).
- * A tinted glyph chip sits above a big value and a quiet label.
- */
+/** Solid-accent extended floating button (COUIFloatingButton) with icon + label. */
 @Composable
-fun RowScope.SummaryCard(icon: ImageVector, label: String, value: String, accent: Color) {
-    GlassCard(modifier = Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(FluxRadius.Inner)) {
-        Column(modifier = Modifier.padding(13.dp)) {
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(accent.copy(alpha = 0.14f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(18.dp))
-            }
-            Spacer(Modifier.height(11.dp))
-            // 值字号收小并允许折两行：像 "2025-06-05" 这样的安全补丁日期在 1/3 宽的卡里也能完整显示。
-            Text(
-                value,
-                style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp, lineHeight = 18.sp),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-/** The row of three summary cards — [IntrinsicSize.Max] keeps all three the same height even when one value wraps. */
-@Composable
-fun SummaryRow(cards: List<SummaryData>, modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier.fillMaxWidth().height(IntrinsicSize.Max),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        cards.forEach { SummaryCard(it.icon, it.label, it.value, it.accent) }
-    }
-}
-
-data class SummaryData(val icon: ImageVector, val label: String, val value: String, val accent: Color)
-
-/** Floating aurora-gradient action button with icon + label. */
-@Composable
-fun GradientFab(text: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun ExtractFab(text: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val flux = LocalFluxColors.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -184,15 +168,15 @@ fun GradientFab(text: String, icon: ImageVector, onClick: () -> Unit, modifier: 
     Row(
         modifier = modifier
             .scale(scale)
-            .height(56.dp)
-            .clip(RoundedCornerShape(FluxRadius.Pill))
-            .background(Brush.horizontalGradient(listOf(flux.gradientStart, flux.gradientEnd)))
+            .height(54.dp)
+            .clip(RoundedCornerShape(FluxRadius.Button))
+            .background(flux.accent)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 22.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+        Icon(icon, contentDescription = null, tint = flux.onAccent, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(10.dp))
-        Text(text, style = MaterialTheme.typography.labelLarge, color = Color.White, textAlign = TextAlign.Center)
+        Text(text, style = MaterialTheme.typography.labelLarge, color = flux.onAccent, textAlign = TextAlign.Center)
     }
 }

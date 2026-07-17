@@ -19,6 +19,10 @@
     <string name="action_parse">解析</string>
     <string name="action_parsing">解析中…</string>
 
+    <!-- Category headers -->
+    <string name="cat_source">来源</string>
+    <string name="cat_package">安装包信息</string>
+
     <!-- Archive summary -->
     <string name="block_size">块大小 %1$d B</string>
     <string name="summary_file_size">文件大小</string>
@@ -53,7 +57,7 @@
 
     <!-- About dialog -->
     <string name="about_version_author">版本 %1$s · 作者 %2$s</string>
-    <string name="about_description">从 Android A/B (payload.bin) 全量 OTA 中并行提取分区镜像。\n支持本地文件与 OTA 直链，多分区并发提取，网络断点续传，提取后 SHA-256 校验。\n界面为自研 ColorOS 16「Flux」设计。</string>
+    <string name="about_description">从 Android A/B (payload.bin) 全量 OTA 中并行提取分区镜像。\n支持本地文件与 OTA 直链，多分区并发提取，网络断点续传，提取后 SHA-256 校验。\n界面遵循 ColorOS 16 卡片列表设计。</string>
     <string name="about_link_title">项目主页</string>
     <string name="credits_title">致谢</string>
     <string name="credits_body">· xyiguanle — payload 分析源码\n· rcmiku/Payload-Dumper-Compose — 前身项目\n· payload-dumper-c — 引擎参考</string>

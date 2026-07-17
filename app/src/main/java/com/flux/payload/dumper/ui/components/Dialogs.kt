@@ -41,6 +41,7 @@ import com.flux.payload.dumper.BuildConfig
 import com.flux.payload.dumper.R
 import com.flux.payload.dumper.core.Net
 import com.flux.payload.dumper.data.Preferences
+import com.flux.payload.dumper.ui.theme.FluxRadius
 
 private const val REPO_URL = "https://github.com/kexi1412/PayloadDumper-Flux"
 private const val AUTHOR = "kexi1412"
@@ -50,7 +51,7 @@ private const val AUTHOR = "kexi1412"
 private fun FluxDialog(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(FluxRadius.Dialog),
             color = MaterialTheme.colorScheme.surface,
             modifier = Modifier.fillMaxWidth(),
         ) {
@@ -91,7 +92,7 @@ fun SettingsDialog(onDismiss: () -> Unit) {
         }
 
         Spacer(Modifier.height(20.dp))
-        GradientPillButton(text = stringResource(R.string.action_done), onClick = { save(); onDismiss() })
+        AccentButton(text = stringResource(R.string.action_done), onClick = { save(); onDismiss() })
     }
 }
 
@@ -143,7 +144,7 @@ fun AboutDialog(onDismiss: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(20.dp))
-        GradientPillButton(text = stringResource(R.string.action_ok), onClick = onDismiss)
+        AccentButton(text = stringResource(R.string.action_ok), onClick = onDismiss)
     }
 }
 
@@ -195,7 +196,7 @@ fun RelinkDialog(
         onDismissRequest = { /* forced — cannot dismiss by tapping outside */ },
         properties = DialogProperties(dismissOnClickOutside = false, dismissOnBackPress = false),
     ) {
-        Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+        Surface(shape = RoundedCornerShape(FluxRadius.Dialog), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Text(stringResource(R.string.relink_title), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.height(10.dp))
@@ -213,7 +214,7 @@ fun RelinkDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(20.dp))
-                GradientPillButton(text = stringResource(R.string.relink_confirm), onClick = { onSubmit(url) }, enabled = url.isNotBlank())
+                AccentButton(text = stringResource(R.string.relink_confirm), onClick = { onSubmit(url) }, enabled = url.isNotBlank())
                 Spacer(Modifier.height(10.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     Text(
@@ -239,6 +240,6 @@ fun PermissionDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(20.dp))
-        GradientPillButton(text = stringResource(R.string.permission_confirm), onClick = onConfirm)
+        AccentButton(text = stringResource(R.string.permission_confirm), onClick = onConfirm)
     }
 }

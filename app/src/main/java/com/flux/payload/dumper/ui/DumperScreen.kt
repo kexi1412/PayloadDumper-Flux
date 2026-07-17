@@ -5,36 +5,27 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.DataUsage
-import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Security
-import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -42,6 +33,8 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -50,36 +43,37 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.flux.payload.dumper.R
 import com.flux.payload.dumper.data.PathUtil
 import com.flux.payload.dumper.data.Preferences
 import com.flux.payload.dumper.model.ArchiveInfo
 import com.flux.payload.dumper.ui.components.AboutDialog
+import com.flux.payload.dumper.ui.components.AccentButton
+import com.flux.payload.dumper.ui.components.CardGroup
+import com.flux.payload.dumper.ui.components.CategoryHeader
+import com.flux.payload.dumper.ui.components.ExtractFab
 import com.flux.payload.dumper.ui.components.FluxBackground
-import com.flux.payload.dumper.ui.components.GlassCard
-import com.flux.payload.dumper.ui.components.GradientFab
-import com.flux.payload.dumper.ui.components.GradientPillButton
-import com.flux.payload.dumper.ui.components.PartitionTile
+import com.flux.payload.dumper.ui.components.InfoRow
+import com.flux.payload.dumper.ui.components.PartitionRow
 import com.flux.payload.dumper.ui.components.PermissionDialog
 import com.flux.payload.dumper.ui.components.RelinkDialog
+import com.flux.payload.dumper.ui.components.RowDivider
 import com.flux.payload.dumper.ui.components.SegmentedToggle
 import com.flux.payload.dumper.ui.components.SettingsDialog
-import com.flux.payload.dumper.ui.components.SummaryData
-import com.flux.payload.dumper.ui.components.SummaryRow
 import com.flux.payload.dumper.ui.components.formatSize
 import com.flux.payload.dumper.ui.theme.FluxRadius
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
 import com.flux.payload.dumper.viewmodel.DumperViewModel
 import com.flux.payload.dumper.viewmodel.ParseState
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DumperScreen(vm: DumperViewModel) {
     val input by vm.input.collectAsState()
@@ -125,25 +119,35 @@ fun DumperScreen(vm: DumperViewModel) {
         if (input.trim().startsWith("http")) vm.parse() else requireStorage { vm.parse() }
     }
 
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
+
     FluxBackground {
         Scaffold(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
             containerColor = Color.Transparent,
-            topBar = { FluxTopBar(onSettings = { showSettings = true }, onFolder = { requireStorage { folderPicker.launch(null) } }, onAbout = { showAbout = true }) },
+            topBar = {
+                FluxTopBar(
+                    scrollBehavior = scrollBehavior,
+                    onSettings = { showSettings = true },
+                    onFolder = { requireStorage { folderPicker.launch(null) } },
+                    onAbout = { showAbout = true },
+                )
+            },
             snackbarHost = { SnackbarHost(snackbarHostState) },
             floatingActionButton = {
                 if (parseState is ParseState.Ready && partitions.isNotEmpty()) {
-                    GradientFab(text = stringResource(R.string.extract_all), icon = Icons.Rounded.Download, onClick = { requireStorage { vm.extractAll() } })
+                    ExtractFab(text = stringResource(R.string.extract_all), icon = Icons.Rounded.Download, onClick = { requireStorage { vm.extractAll() } })
                 }
             },
         ) { padding ->
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = 100.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding(), bottom = 110.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
+                item { CategoryHeader(stringResource(R.string.cat_source)) }
                 item {
-                    InputHero(
+                    InputCard(
                         mode = sourceMode,
                         onModeChange = { sourceMode = it },
                         value = input,
@@ -156,21 +160,25 @@ fun DumperScreen(vm: DumperViewModel) {
 
                 when (val st = parseState) {
                     is ParseState.Ready -> {
-                        item { OtaSummary(st.archive) }
-                        item {
-                            Text(
-                                stringResource(R.string.images_header, partitions.size),
-                                style = MaterialTheme.typography.titleLarge,
-                                color = MaterialTheme.colorScheme.onBackground,
-                                modifier = Modifier.padding(start = 4.dp, top = 4.dp),
-                            )
-                        }
+                        item { CategoryHeader(stringResource(R.string.cat_package)) }
+                        item { OtaSummaryCard(st.archive) }
+
+                        item { CategoryHeader(stringResource(R.string.images_header, partitions.size)) }
                         item { SearchField(search, vm::updateSearch) }
-                        items(partitions, key = { it.partitionName }) { p ->
-                            PartitionTile(info = p, onExtract = { requireStorage { vm.extract(p.partitionName) } })
+                        item { Spacer(Modifier.height(8.dp)) }
+                        item {
+                            CardGroup {
+                                partitions.forEachIndexed { i, p ->
+                                    PartitionRow(info = p, onExtract = { requireStorage { vm.extract(p.partitionName) } })
+                                    if (i < partitions.lastIndex) RowDivider(startInset = 74.dp)
+                                }
+                            }
                         }
                     }
-                    is ParseState.Failed -> item { ErrorCard(st.message) }
+                    is ParseState.Failed -> {
+                        item { Spacer(Modifier.height(12.dp)) }
+                        item { ErrorCard(st.message) }
+                    }
                     else -> {}
                 }
             }
@@ -188,53 +196,38 @@ fun DumperScreen(vm: DumperViewModel) {
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FluxTopBar(onSettings: () -> Unit, onFolder: () -> Unit, onAbout: () -> Unit) {
-    val flux = LocalFluxColors.current
+private fun FluxTopBar(
+    scrollBehavior: androidx.compose.material3.TopAppBarScrollBehavior,
+    onSettings: () -> Unit,
+    onFolder: () -> Unit,
+    onAbout: () -> Unit,
+) {
     var menu by remember { mutableStateOf(false) }
-    Box(
-        modifier = Modifier.fillMaxWidth().background(flux.glass).statusBarsPadding()
-            .padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Brush.linearGradient(listOf(flux.gradientStart, flux.gradientEnd))),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Rounded.DataUsage, contentDescription = null, tint = Color.White, modifier = Modifier.size(23.dp))
+    LargeTopAppBar(
+        title = { Text(stringResource(R.string.app_name), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        actions = {
+            IconButton(onClick = { menu = true }) {
+                Icon(Icons.Rounded.MoreVert, contentDescription = stringResource(R.string.menu), tint = MaterialTheme.colorScheme.onBackground)
             }
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    stringResource(R.string.app_name),
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Text(
-                    stringResource(R.string.app_tagline),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text(stringResource(R.string.action_settings)) }, onClick = { menu = false; onSettings() })
+                DropdownMenuItem(text = { Text(stringResource(R.string.action_output_folder)) }, onClick = { menu = false; onFolder() })
+                DropdownMenuItem(text = { Text(stringResource(R.string.action_about)) }, onClick = { menu = false; onAbout() })
             }
-            Box {
-                IconButton(onClick = { menu = true }) {
-                    Icon(Icons.Rounded.MoreVert, contentDescription = stringResource(R.string.menu), tint = MaterialTheme.colorScheme.onBackground)
-                }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(text = { Text(stringResource(R.string.action_settings)) }, onClick = { menu = false; onSettings() })
-                    DropdownMenuItem(text = { Text(stringResource(R.string.action_output_folder)) }, onClick = { menu = false; onFolder() })
-                    DropdownMenuItem(text = { Text(stringResource(R.string.action_about)) }, onClick = { menu = false; onAbout() })
-                }
-            }
-        }
-    }
+        },
+        colors = TopAppBarDefaults.largeTopAppBarColors(
+            containerColor = MaterialTheme.colorScheme.background,
+            scrolledContainerColor = MaterialTheme.colorScheme.background,
+            titleContentColor = MaterialTheme.colorScheme.onBackground,
+        ),
+        scrollBehavior = scrollBehavior,
+    )
 }
 
 @Composable
-private fun InputHero(
+private fun InputCard(
     mode: Int,
     onModeChange: (Int) -> Unit,
     value: String,
@@ -243,15 +236,15 @@ private fun InputHero(
     parsing: Boolean,
     onParse: () -> Unit,
 ) {
-    GlassCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(FluxRadius.Card)) {
+    CardGroup {
         val browseIcon: (@Composable () -> Unit)? = if (mode == 0) {
             { IconButton(onClick = onBrowse) { Icon(Icons.Rounded.FolderOpen, contentDescription = stringResource(R.string.action_browse)) } }
         } else {
             null
         }
-        Column(modifier = Modifier.padding(18.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             SegmentedToggle(options = listOf(stringResource(R.string.source_local), stringResource(R.string.source_network)), selectedIndex = mode, onSelect = onModeChange)
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(14.dp))
             OutlinedTextField(
                 value = value,
                 onValueChange = onValueChange,
@@ -268,36 +261,37 @@ private fun InputHero(
                     unfocusedIndicatorColor = Color.Transparent,
                 ),
             )
-            Spacer(Modifier.height(16.dp))
-            GradientPillButton(text = stringResource(if (parsing) R.string.action_parsing else R.string.action_parse), onClick = onParse, enabled = !parsing)
+            Spacer(Modifier.height(14.dp))
+            AccentButton(text = stringResource(if (parsing) R.string.action_parsing else R.string.action_parse), onClick = onParse, enabled = !parsing)
         }
     }
 }
 
 @Composable
-private fun OtaSummary(info: ArchiveInfo) {
+private fun OtaSummaryCard(info: ArchiveInfo) {
     val flux = LocalFluxColors.current
-    Column {
-        Text(
-            info.fileName,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(start = 4.dp),
-        )
-        Text(
-            stringResource(R.string.block_size, info.blockSize),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 12.dp),
-        )
-        // 信息卡固定用蓝/绿/橙三色,让这排始终是彩色的,不随主色变单调。
-        SummaryRow(
-            cards = listOf(
-                SummaryData(Icons.Rounded.Storage, stringResource(R.string.summary_file_size), formatSize(info.fileSize), Color(0xFF3B82F6)),
-                SummaryData(Icons.Rounded.Security, stringResource(R.string.summary_security_patch), info.securityPatchLevel.ifBlank { "—" }, flux.success),
-                SummaryData(Icons.Rounded.Dns, stringResource(R.string.summary_partitions), "${info.partitionCount}", Color(0xFFF59E0B)),
-            ),
-        )
+    CardGroup {
+        // filename + block size as a two-line header row
+        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
+            Text(
+                info.fileName,
+                style = MaterialTheme.typography.titleMedium,
+                color = flux.labelPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                stringResource(R.string.block_size, info.blockSize),
+                style = MaterialTheme.typography.labelMedium,
+                color = flux.labelSecondary,
+            )
+        }
+        RowDivider(startInset = 20.dp)
+        InfoRow(stringResource(R.string.summary_file_size), formatSize(info.fileSize))
+        RowDivider(startInset = 20.dp)
+        InfoRow(stringResource(R.string.summary_security_patch), info.securityPatchLevel.ifBlank { "—" })
+        RowDivider(startInset = 20.dp)
+        InfoRow(stringResource(R.string.summary_partitions), "${info.partitionCount}")
     }
 }
 
@@ -310,7 +304,7 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit) {
         leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
         singleLine = true,
         shape = RoundedCornerShape(FluxRadius.Pill),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
         colors = TextFieldDefaults.colors(
             focusedContainerColor = MaterialTheme.colorScheme.surface,
             unfocusedContainerColor = MaterialTheme.colorScheme.surface,
@@ -322,11 +316,12 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit) {
 
 @Composable
 private fun ErrorCard(message: String) {
-    GlassCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(FluxRadius.Card)) {
+    val flux = LocalFluxColors.current
+    CardGroup {
         Column(Modifier.padding(20.dp)) {
-            Text(stringResource(R.string.parse_failed), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
+            Text(stringResource(R.string.parse_failed), style = MaterialTheme.typography.titleMedium, color = flux.danger)
             Spacer(Modifier.height(6.dp))
-            Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(message, style = MaterialTheme.typography.bodyMedium, color = flux.labelSecondary)
         }
     }
 }
