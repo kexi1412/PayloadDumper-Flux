@@ -1,5 +1,6 @@
 package com.flux.payload.dumper.viewmodel
 
+import android.net.Uri
 import android.os.Environment
 import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
@@ -14,6 +15,7 @@ import com.flux.payload.dumper.core.PayloadExtractor
 import com.flux.payload.dumper.core.PayloadParser
 import com.flux.payload.dumper.core.PayloadSource
 import com.flux.payload.dumper.core.ResumeState
+import com.flux.payload.dumper.core.UriSource
 import com.flux.payload.dumper.core.toHex
 import com.flux.payload.dumper.data.Preferences
 import com.flux.payload.dumper.model.ArchiveInfo
@@ -97,12 +99,17 @@ class DumperViewModel : ViewModel() {
             runCatching {
                 withContext(Dispatchers.IO) {
                     closeSource()
-                    val src: PayloadSource = if (raw.startsWith("http://") || raw.startsWith("https://")) {
-                        HttpSource.open(raw, client)
-                    } else {
-                        val f = File(raw)
-                        if (!f.exists() || !f.canRead()) throw java.io.IOException(str(R.string.err_file_unreadable, raw))
-                        FileSource(f)
+                    val src: PayloadSource = when {
+                        raw.startsWith("http://") || raw.startsWith("https://") ->
+                            HttpSource.open(raw, client)
+                        raw.startsWith("content://") ->
+                            runCatching { UriSource.open(DumperApplication.appContext, Uri.parse(raw)) }
+                                .getOrElse { throw java.io.IOException(str(R.string.err_file_unreadable, raw)) }
+                        else -> {
+                            val f = File(raw)
+                            if (!f.exists() || !f.canRead()) throw java.io.IOException(str(R.string.err_file_unreadable, raw))
+                            FileSource(f)
+                        }
                     }
                     val parsed = PayloadParser.parse(src)
                     source = src

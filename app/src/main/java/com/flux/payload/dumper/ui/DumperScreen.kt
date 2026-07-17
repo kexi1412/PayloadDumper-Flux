@@ -95,8 +95,16 @@ fun DumperScreen(vm: DumperViewModel) {
         snackbar?.let { snackbarHostState.showSnackbar(it); vm.consumeSnackbar() }
     }
 
-    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        uri?.let { PathUtil.realPathFromUri(context, it)?.let(vm::updateInput) }
+    // ACTION_OPEN_DOCUMENT hands back a persistable content:// URI we can always read (no fragile
+    // real-path mapping, no MANAGE_EXTERNAL_STORAGE just to pick a file). We persist the read grant
+    // so a restored input still parses after an app restart.
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        uri?.let {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            vm.updateInput(it.toString())
+        }
     }
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
         uri?.let { PathUtil.realPathFromUri(context, it)?.let { p -> Preferences.setString(Preferences.KEY_OUTPUT_FOLDER, p) } }
@@ -116,7 +124,9 @@ fun DumperScreen(vm: DumperViewModel) {
             .onFailure { permissionLauncher.launch(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) }
     }
     fun doParse() {
-        if (input.trim().startsWith("http")) vm.parse() else requireStorage { vm.parse() }
+        val t = input.trim()
+        // http and content:// are read without all-files-access; only a raw filesystem path needs it.
+        if (t.startsWith("http") || t.startsWith("content://")) vm.parse() else requireStorage { vm.parse() }
     }
 
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
@@ -152,7 +162,7 @@ fun DumperScreen(vm: DumperViewModel) {
                         onModeChange = { sourceMode = it },
                         value = input,
                         onValueChange = vm::updateInput,
-                        onBrowse = { requireStorage { filePicker.launch("*/*") } },
+                        onBrowse = { filePicker.launch(arrayOf("*/*")) },
                         parsing = parseState is ParseState.Parsing,
                         onParse = ::doParse,
                     )

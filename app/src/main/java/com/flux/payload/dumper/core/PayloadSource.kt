@@ -1,5 +1,9 @@
 package com.flux.payload.dumper.core
 
+import android.content.Context
+import android.net.Uri
+import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.Closeable
@@ -54,6 +58,60 @@ class FileSource(private val file: File) : PayloadSource {
     }
 
     override fun close() = channel.close()
+}
+
+/**
+ * SAF (content://) document source. Opens the picked document once as a random-access
+ * [ParcelFileDescriptor] and reads through positional [FileChannel.read], exactly like [FileSource]
+ * — so concurrent extraction works and no `MANAGE_EXTERNAL_STORAGE` real-path resolution is needed.
+ *
+ * This is what makes an [android.content.Intent.ACTION_OPEN_DOCUMENT] pick "just work" on every
+ * device: the URI is read directly instead of being fragile-mapped back to a `/sdcard` path
+ * (the old GetContent + realPathFromUri flow only handled `primary:` document IDs).
+ */
+class UriSource private constructor(
+    private val stream: ParcelFileDescriptor.AutoCloseInputStream,
+    private val channel: FileChannel,
+    override val size: Long,
+    private val displayName: String,
+) : PayloadSource {
+
+    override fun fileName(): String = displayName
+
+    override fun readFully(offset: Long, buffer: ByteArray, bufOffset: Int, len: Int) {
+        val bb = ByteBuffer.wrap(buffer, bufOffset, len)
+        var pos = offset
+        while (bb.hasRemaining()) {
+            val n = channel.read(bb, pos)
+            if (n < 0) throw EOFException("Unexpected EOF at $pos (wanted ${offset + len})")
+            pos += n
+        }
+    }
+
+    // AutoCloseInputStream.close() closes both the FileChannel and the underlying descriptor.
+    override fun close() { runCatching { stream.close() } }
+
+    companion object {
+        fun open(context: Context, uri: Uri): UriSource {
+            val resolver = context.contentResolver
+            val pfd = resolver.openFileDescriptor(uri, "r")
+                ?: throw IOException("Cannot open document: $uri")
+            val stream = ParcelFileDescriptor.AutoCloseInputStream(pfd)
+            val channel = stream.channel
+            val size = if (pfd.statSize >= 0) pfd.statSize else channel.size()
+            if (size <= 0L) { runCatching { stream.close() }; throw IOException("Empty or non-seekable document: $uri") }
+            val name = queryDisplayName(context, uri)
+                ?: uri.lastPathSegment?.substringAfterLast('/')?.ifBlank { null }
+                ?: "payload.bin"
+            return UriSource(stream, channel, size, name)
+        }
+
+        private fun queryDisplayName(context: Context, uri: Uri): String? = runCatching {
+            context.contentResolver
+                .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getString(0) else null }
+        }.getOrNull()
+    }
 }
 
 /**
