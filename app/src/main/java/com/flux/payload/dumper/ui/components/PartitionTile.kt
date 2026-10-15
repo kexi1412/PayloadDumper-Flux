@@ -38,12 +38,16 @@ import com.flux.payload.dumper.ui.theme.FluxRadius
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
 
 /**
- * COUI 17 分区列表行——设计为 COUI preference item，放在 [CardGroup] 里，
- * 行间用 [RowDivider] 分隔。
+ * COUI 17 分区列表行——精确模仿 coui_preference.xml 的布局结构。
  *
- * COUI 17 的显著变化是引导图标不再是裸露的圆环，而是包裹在
- * COUIRoundImageView 风格的着色圆角方块里。进度环保留在方块上方，
- * 提取完成后变成对勾。
+ * 从 AXML 提取的真实参数：
+ *   paddingStart = 32dp, paddingEnd = 32dp
+ *   minHeight = 48dp（但实际因为有 icon+两行文字所以更高）
+ *   图标容器 FrameLayout 在左侧（couiType=1 圆角方形）
+ *   文字区在中间（weight=1），标题在上摘要下
+ *   操作区在右侧
+ *
+ * 行间分割线从 72dp 开始（= paddingStart 32dp + icon 40dp），与图标右边缘对齐。
  */
 @Composable
 fun PartitionRow(info: PartitionInfo, onExtract: () -> Unit) {
@@ -62,13 +66,14 @@ fun PartitionRow(info: PartitionInfo, onExtract: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 68.dp)
-            .padding(start = 24.dp, end = 16.dp, top = 14.dp, bottom = 14.dp),
+            .heightIn(min = 64.dp)
+            .padding(start = 32.dp, end = 32.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         LeadingIconBox(info, progress, ringColor)
 
-        Column(modifier = Modifier.padding(horizontal = 14.dp).weight(1f)) {
+        // 文字区：标题 + 摘要，weight=1
+        Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) {
             Text(
                 info.partitionName,
                 style = MaterialTheme.typography.titleMedium,
@@ -76,13 +81,13 @@ fun PartitionRow(info: PartitionInfo, onExtract: () -> Unit) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.height(4.dp))
             Text(
                 text = subtitleFor(info),
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (errorish) flux.danger else flux.labelSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
             )
         }
 
@@ -92,15 +97,15 @@ fun PartitionRow(info: PartitionInfo, onExtract: () -> Unit) {
                 ExtractState.PAUSED, ExtractState.ERROR -> stringResource(R.string.action_resume)
                 else -> stringResource(R.string.action_extract)
             }
+            Spacer(Modifier.width(12.dp))
             TonalButton(text = label, onClick = onExtract)
-            Spacer(Modifier.width(4.dp))
         }
     }
 }
 
 /**
- * COUI 17 图标容器——进度环包裹在一个着色圆角方块内（COUIRoundImageView 风格）。
- * 方块尺寸 40dp，内嵌进度环和中心图标。
+ * COUI 17 图标容器——进度环保留在着色圆角方块内。
+ * 方块 40dp，圆角 10dp，内部进度环 34dp + 中心图标 18dp。
  */
 @Composable
 private fun LeadingIconBox(info: PartitionInfo, progress: Float, ringColor: Color) {

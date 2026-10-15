@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,16 +34,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.flux.payload.dumper.ui.theme.FluxRadius
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
 
 /**
- * ColorOS 17 卡片列表背景：柔和暖灰底色（coui_color_background_with_card）。
- * COUI 17 相比 16 去掉了所有玻璃质感，使用更纯净的平面表面，让白色分组卡片
- * 读作原生设置组。
+ * ColorOS 17 卡片列表背景。
+ *
+ * 底色精确值：coui_color_background_with_card = #F0F1F2（浅色）/ #000000（暗色）。
  */
 @Composable
 fun FluxBackground(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
@@ -53,10 +56,10 @@ fun FluxBackground(modifier: Modifier = Modifier, content: @Composable BoxScope.
 }
 
 /**
- * COUI 17 分组圆角卡片——整个列表的基础构件。子项在 Column 中堆叠；
- * 行之间用 [RowDivider] 获得 COUI 的内嵌发丝分割线。
+ * COUI 17 分组圆角卡片。
  *
- * COUI 17 相比 16：圆角从 17dp 增大到 22dp，暗色模式加了极淡轮廓。
+ * 圆角：settingslib_preference_corner_radius = 20dp。
+ * 暗色模式加 0.5dp 极淡轮廓（coui_color_label_quaternary）。
  */
 @Composable
 fun CardGroup(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
@@ -72,11 +75,11 @@ fun CardGroup(modifier: Modifier = Modifier, content: @Composable ColumnScope.()
 }
 
 /**
- * 卡片内行之间的内嵌发丝分割线（coui_color_divider）。
- * COUI 17 的分割线更淡、更细，几乎不可见。
+ * 行间分割线——COUI 17 使用极淡的内嵌发丝线。
+ * 起始缩进 72dp（与 COUI 17 preference 的 paddingStart 32dp + icon 区域对齐）。
  */
 @Composable
-fun RowDivider(startInset: Dp = 24.dp, endInset: Dp = 0.dp) {
+fun RowDivider(startInset: Dp = 72.dp, endInset: Dp = 0.dp) {
     val flux = LocalFluxColors.current
     HorizontalDivider(
         modifier = Modifier.padding(start = startInset, end = endInset),
@@ -86,24 +89,32 @@ fun RowDivider(startInset: Dp = 24.dp, endInset: Dp = 0.dp) {
 }
 
 /**
- * 卡片组上方的小灰字标题（support_preference_category_title_size 13sp）。
- * COUI 17 间距更宽松：top 从 18dp 增到 22dp。
+ * COUI 17 分类标题——coui_preference_classification_title_layout。
+ * 字号 12sp，字重 sans-serif-medium，左边距 16dp（category_marginStart）。
  */
 @Composable
 fun CategoryHeader(text: String, modifier: Modifier = Modifier) {
     val flux = LocalFluxColors.current
     Text(
         text = text,
-        style = MaterialTheme.typography.labelSmall,
+        style = MaterialTheme.typography.labelSmall.copy(
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+        ),
         color = flux.labelSecondary,
-        modifier = modifier.padding(start = 28.dp, end = 28.dp, top = 22.dp, bottom = 10.dp),
+        modifier = modifier.padding(start = 16.dp, end = 8.dp, top = 20.dp, bottom = 8.dp),
     )
 }
 
 /**
- * COUI 17 assignment 行——标题左 / 值右对齐同行。
- * 这是 COUI 17 preference_assignment_in_right 布局的 Compose 等价物。
- * 值文本使用 labelMedium（14sp Medium）而非旧的 bodyMedium。
+ * COUI 17 assignment 行——coui_preference_assignment_in_right 布局的 Compose 等价。
+ *
+ * 精确参数（从 AXML 提取）：
+ *   paddingStart = 32dp, paddingEnd = 32dp
+ *   minHeight = 48dp
+ *   标题左、值右对齐同行
+ *
+ * 值文字颜色使用 coui_preference_secondary_text_color。
  */
 @Composable
 fun InfoRow(
@@ -115,8 +126,8 @@ fun InfoRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 60.dp)
-            .padding(horizontal = 24.dp, vertical = 16.dp),
+            .heightIn(min = 48.dp)
+            .padding(start = 32.dp, end = 32.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -136,8 +147,8 @@ fun InfoRow(
 }
 
 /**
- * COUI 17 分段控件（COUITabView）：灰色轨道 + 白色滑块。
- * 圆角增大到 12dp，滑块圆角 9dp，轨道 padding 加宽。
+ * COUI 17 分段控件（COUITabView）。
+ * 灰色轨道 + 白色滑块。
  */
 @Composable
 fun SegmentedToggle(
@@ -175,8 +186,11 @@ fun SegmentedToggle(
 }
 
 /**
- * COUI 17 图标圆角方块容器——COUIRoundImageView 的 Compose 等价物。
- * 给图标包一层柔和的着色圆角方块背景，是 COUI 17 相比 16 最显著的视觉变化。
+ * COUI 17 圆角方块图标容器——COUIRoundImageView 风格。
+ *
+ * COUI 17 给每个 preference 图标包了一层着色圆角方块。
+ * couiType=1 表示圆角方形。
+ * 尺寸 40dp × 40dp（视觉适配），圆角 coui_textinput_corner_radius = 10dp。
  */
 @Composable
 fun IconBox(
@@ -185,8 +199,8 @@ fun IconBox(
     tint: Color = LocalFluxColors.current.accent,
     bgColor: Color = LocalFluxColors.current.iconBoxBg,
     modifier: Modifier = Modifier,
-    size: Dp = 36.dp,
-    iconSize: Dp = 20.dp,
+    size: Dp = 40.dp,
+    iconSize: Dp = 22.dp,
 ) {
     Box(
         modifier = modifier
@@ -195,7 +209,7 @@ fun IconBox(
             .background(bgColor),
         contentAlignment = Alignment.Center,
     ) {
-        androidx.compose.material3.Icon(
+        Icon(
             icon,
             contentDescription = contentDescription,
             tint = tint,
@@ -205,8 +219,7 @@ fun IconBox(
 }
 
 /**
- * COUI 17 实心强调悬浮按钮（COUIFloatingButton）。
- * 圆角增大到 16dp，高度保持 54dp。
+ * COUI 17 实心强调悬浮按钮。
  */
 @Composable
 fun ExtractFab(text: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -224,7 +237,7 @@ fun ExtractFab(text: String, icon: ImageVector, onClick: () -> Unit, modifier: M
             .padding(horizontal = 24.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        androidx.compose.material3.Icon(icon, contentDescription = null, tint = flux.onAccent, modifier = Modifier.size(20.dp))
+        Icon(icon, contentDescription = null, tint = flux.onAccent, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(10.dp))
         Text(text, style = MaterialTheme.typography.labelLarge, color = flux.onAccent, textAlign = TextAlign.Center)
     }

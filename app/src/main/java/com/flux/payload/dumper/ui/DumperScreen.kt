@@ -50,8 +50,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.flux.payload.dumper.R
 import com.flux.payload.dumper.data.PathUtil
 import com.flux.payload.dumper.data.Preferences
@@ -149,11 +151,18 @@ fun DumperScreen(vm: DumperViewModel) {
                 }
             },
         ) { padding ->
+            // COUI 17 的列表左右边距是 16dp（卡片外的 margin），卡片内行 padding 是 32dp
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = padding.calculateTopPadding(), bottom = 120.dp),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = padding.calculateTopPadding(),
+                    bottom = 120.dp,
+                ),
                 verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
+                // COUI 17 分类标题：左 margin 16dp（category_marginStart），紧贴列表
                 item { CategoryHeader(stringResource(R.string.cat_source)) }
                 item {
                     InputCard(
@@ -179,7 +188,7 @@ fun DumperScreen(vm: DumperViewModel) {
                             CardGroup {
                                 partitions.forEachIndexed { i, p ->
                                     PartitionRow(info = p, onExtract = { requireStorage { vm.extract(p.partitionName) } })
-                                    if (i < partitions.lastIndex) RowDivider(startInset = 78.dp)
+                                    if (i < partitions.lastIndex) RowDivider(startInset = 72.dp)
                                 }
                             }
                         }
@@ -205,6 +214,10 @@ fun DumperScreen(vm: DumperViewModel) {
     )
 }
 
+/**
+ * COUI 17 折叠工具栏——大标题 32sp Bold，折叠后 24sp。
+ * 展开高度 coui_appbar_title_expanded_height = 110dp。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FluxTopBar(
@@ -215,7 +228,17 @@ private fun FluxTopBar(
 ) {
     var menu by remember { mutableStateOf(false) }
     LargeTopAppBar(
-        title = { Text(stringResource(R.string.app_name), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        title = {
+            Text(
+                stringResource(R.string.app_name),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.displaySmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 28.sp,
+                ),
+            )
+        },
         actions = {
             IconButton(onClick = { menu = true }) {
                 Icon(Icons.Rounded.MoreVert, contentDescription = stringResource(R.string.menu), tint = MaterialTheme.colorScheme.onBackground)
@@ -235,6 +258,9 @@ private fun FluxTopBar(
     )
 }
 
+/**
+ * 输入卡片——COUI 17 卡片内有 32dp 内距。
+ */
 @Composable
 private fun InputCard(
     mode: Int,
@@ -247,13 +273,12 @@ private fun InputCard(
 ) {
     val flux = LocalFluxColors.current
     CardGroup {
-        val browseIcon: (@Composable () -> Unit)? = if (mode == 0) {
-            { IconButton(onClick = onBrowse) { Icon(Icons.Rounded.FolderOpen, contentDescription = stringResource(R.string.action_browse)) } }
-        } else {
-            null
-        }
-        Column(modifier = Modifier.padding(20.dp)) {
-            SegmentedToggle(options = listOf(stringResource(R.string.source_local), stringResource(R.string.source_network)), selectedIndex = mode, onSelect = onModeChange)
+        Column(modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 20.dp, bottom = 20.dp)) {
+            SegmentedToggle(
+                options = listOf(stringResource(R.string.source_local), stringResource(R.string.source_network)),
+                selectedIndex = mode,
+                onSelect = onModeChange,
+            )
             Spacer(Modifier.height(16.dp))
             OutlinedTextField(
                 value = value,
@@ -269,7 +294,13 @@ private fun InputCard(
                         iconSize = 18.dp,
                     )
                 },
-                trailingIcon = browseIcon,
+                trailingIcon = {
+                    if (mode == 0) {
+                        IconButton(onClick = onBrowse) {
+                            Icon(Icons.Rounded.FolderOpen, contentDescription = stringResource(R.string.action_browse))
+                        }
+                    }
+                },
                 singleLine = false,
                 maxLines = 3,
                 shape = RoundedCornerShape(FluxRadius.Field),
@@ -282,16 +313,25 @@ private fun InputCard(
                 ),
             )
             Spacer(Modifier.height(16.dp))
-            AccentButton(text = stringResource(if (parsing) R.string.action_parsing else R.string.action_parse), onClick = onParse, enabled = !parsing)
+            AccentButton(
+                text = stringResource(if (parsing) R.string.action_parsing else R.string.action_parse),
+                onClick = onParse,
+                enabled = !parsing,
+            )
         }
     }
 }
 
+/**
+ * OTA 摘要卡片——精确模仿 coui_preference_assignment_in_right 行结构。
+ * 每行 paddingStart/End = 32dp，行间分割线从 32dp 开始。
+ */
 @Composable
 private fun OtaSummaryCard(info: ArchiveInfo) {
     val flux = LocalFluxColors.current
     CardGroup {
-        Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)) {
+        // 文件名标题区域——不使用标准 InfoRow，用自定义标题块
+        Column(modifier = Modifier.padding(start = 32.dp, end = 32.dp, top = 20.dp, bottom = 8.dp)) {
             Text(
                 info.fileName,
                 style = MaterialTheme.typography.titleMedium,
@@ -303,13 +343,14 @@ private fun OtaSummaryCard(info: ArchiveInfo) {
                 stringResource(R.string.block_size, info.blockSize),
                 style = MaterialTheme.typography.bodyMedium,
                 color = flux.labelSecondary,
+                modifier = Modifier.padding(top = 2.dp),
             )
         }
-        RowDivider(startInset = 24.dp)
+        RowDivider(startInset = 32.dp)
         InfoRow(stringResource(R.string.summary_file_size), formatSize(info.fileSize))
-        RowDivider(startInset = 24.dp)
+        RowDivider(startInset = 32.dp)
         InfoRow(stringResource(R.string.summary_security_patch), info.securityPatchLevel.ifBlank { "—" })
-        RowDivider(startInset = 24.dp)
+        RowDivider(startInset = 32.dp)
         InfoRow(stringResource(R.string.summary_partitions), "${info.partitionCount}")
     }
 }
@@ -337,10 +378,14 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit) {
 private fun ErrorCard(message: String) {
     val flux = LocalFluxColors.current
     CardGroup {
-        Column(Modifier.padding(24.dp)) {
+        Column(modifier = Modifier.padding(start = 32.dp, end = 32.dp, top = 20.dp, bottom = 20.dp)) {
             Text(stringResource(R.string.parse_failed), style = MaterialTheme.typography.titleMedium, color = flux.danger)
-            Spacer(Modifier.height(8.dp))
-            Text(message, style = MaterialTheme.typography.bodyMedium, color = flux.labelSecondary)
+            Text(
+                message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = flux.labelSecondary,
+                modifier = Modifier.padding(top = 6.dp),
+            )
         }
     }
 }
