@@ -1,6 +1,7 @@
 package com.flux.payload.dumper.ui.components
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Dns
@@ -22,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -30,13 +33,16 @@ import com.flux.payload.dumper.R
 import com.flux.payload.dumper.model.ExtractState
 import com.flux.payload.dumper.model.PartitionInfo
 import com.flux.payload.dumper.model.VerifyState
+import com.flux.payload.dumper.ui.theme.FluxRadius
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
 
 /**
- * A single partition list-row, laid out like a ColorOS preference item and meant to sit inside a
- * [CardGroup] with [RowDivider]s between siblings. The leading glyph is wrapped by a thin progress
- * ring that fills during extraction and turns into a check on success — the one functional flourish
- * kept from the previous design.
+ * COUI 17 分区列表行——设计为 COUI preference item，放在 [CardGroup] 里，
+ * 行间用 [RowDivider] 分隔。
+ *
+ * COUI 17 的显著变化是引导图标不再是裸露的圆环，而是包裹在
+ * COUIRoundImageView 风格的着色圆角方块里。进度环保留在方块上方，
+ * 提取完成后变成对勾。
  */
 @Composable
 fun PartitionRow(info: PartitionInfo, onExtract: () -> Unit) {
@@ -55,11 +61,11 @@ fun PartitionRow(info: PartitionInfo, onExtract: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 64.dp)
-            .padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+            .heightIn(min = 68.dp)
+            .padding(start = 24.dp, end = 16.dp, top = 14.dp, bottom = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        LeadingRing(info, progress, ringColor)
+        LeadingIconBox(info, progress, ringColor)
 
         Column(modifier = Modifier.padding(horizontal = 14.dp).weight(1f)) {
             Text(
@@ -69,9 +75,10 @@ fun PartitionRow(info: PartitionInfo, onExtract: () -> Unit) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            Spacer(Modifier.height(4.dp))
             Text(
                 text = subtitleFor(info),
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.bodyMedium,
                 color = if (errorish) flux.danger else flux.labelSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -90,18 +97,28 @@ fun PartitionRow(info: PartitionInfo, onExtract: () -> Unit) {
     }
 }
 
+/**
+ * COUI 17 图标容器——进度环包裹在一个着色圆角方块内（COUIRoundImageView 风格）。
+ * 方块尺寸 40dp，内嵌进度环和中心图标。
+ */
 @Composable
-private fun LeadingRing(info: PartitionInfo, progress: Float, ringColor: Color) {
+private fun LeadingIconBox(info: PartitionInfo, progress: Float, ringColor: Color) {
     val flux = LocalFluxColors.current
     val running = info.extractState == ExtractState.RUNNING
     val done = info.extractState == ExtractState.DONE
-    Box(modifier = Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(RoundedCornerShape(FluxRadius.IconBox))
+            .background(flux.iconBoxBg),
+        contentAlignment = Alignment.Center,
+    ) {
         CircularProgressIndicator(
             progress = { if (running || done || info.extractState == ExtractState.PAUSED) progress else 0f },
-            modifier = Modifier.size(40.dp),
+            modifier = Modifier.size(34.dp),
             strokeWidth = 2.5.dp,
             color = ringColor,
-            trackColor = flux.fieldBg,
+            trackColor = Color.Transparent,
             gapSize = 0.dp,
         )
         val centerIcon = when {

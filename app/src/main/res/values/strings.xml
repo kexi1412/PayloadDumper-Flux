@@ -57,7 +57,7 @@
 
     <!-- About dialog -->
     <string name="about_version_author">Version %1$s · by %2$s</string>
-    <string name="about_description">Extract partition images in parallel from a full Android A/B (payload.bin) OTA.\nSupports local files and OTA direct links, concurrent multi-partition extraction, resumable network downloads, and SHA-256 verification after extraction.\nUI follows the ColorOS 16 card-list design.</string>
+    <string name="about_description">Extract partition images in parallel from a full Android A/B (payload.bin) OTA.\nSupports local files and OTA direct links, concurrent multi-partition extraction, resumable network downloads, and SHA-256 verification after extraction.\nUI follows the ColorOS 17 card-list design.</string>
     <string name="about_link_title">Project home</string>
     <string name="credits_title">Credits</string>
     <string name="credits_body">· xyiguanle — payload analysis source\n· rcmiku/Payload-Dumper-Compose — predecessor project\n· payload-dumper-c — engine reference</string>

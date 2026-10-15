@@ -18,7 +18,7 @@
 
 **Payload Dumper · Flux** 能把单个分区镜像（`boot.img`、`system.img`、`vendor.img`…）直接从全量 A/B OTA 包里抽出来。可以指向本地 `payload.bin` / OTA 压缩包，也可以粘贴 OTA **下载直链** —— 它用 HTTP Range 流式解析，无需先把整包下完。
 
-提取引擎从零重写，核心是一套**无状态定位读源**加真正的线程池，设计深度参考 `payload-dumper-c`。界面为自研的 **ColorOS 16「流体 / Flux」** 玻璃拟态设计语言，基于 Jetpack Compose + Material 3。
+提取引擎从零重写，核心是一套**无状态定位读源**加真正的线程池，设计深度参考 `payload-dumper-c`。界面遵循 **ColorOS 17（COUI 17）** 卡片列表设计语言——22dp 圆角分组卡片、assignment 信息行、着色圆角方块图标容器——基于 Jetpack Compose + Material 3。
 
 ## 功能亮点
 
@@ -51,7 +51,7 @@ core/
   Net.kt              OkHttp 客户端（注入自定义 UA / Header）
 model/      UI 与引擎共享的数据模型
 viewmodel/  DumperViewModel：解析 / 提取 / 状态编排（StateFlow）
-ui/         ColorOS 16 Flux 主题 + 组件 + 主界面
+ui/         ColorOS 17 (COUI 17) 主题 + 组件 + 主界面
 ```
 
 **关键设计**：`PayloadSource` 的读取全部是**无状态定位读**（`readAt(offset, len)`），对应 `payload-dumper-c` 的 `source_interface.h`（clone / read-at-offset / destroy）。正是它让「多 worker 并发提取」在文件与网络两种来源上都成立。
@@ -89,7 +89,7 @@ ui/         ColorOS 16 Flux 主题 + 组件 + 主界面
 - 引擎参考：`payload-dumper-c`（线程池 / 无状态源 / extents 分散写）。
 - 依赖：Jetpack Compose、OkHttp、Apache Commons Compress、tukaani-xz、aircompressor、protobuf。
 
-UI 布局为本项目自行设计，配色沿用自研 ColorOS 16「Flux」主题。
+UI 布局为本项目自行设计，配色提取自 ColorOS 17（COUI 17）原生设置应用。
 
 ## 许可
 

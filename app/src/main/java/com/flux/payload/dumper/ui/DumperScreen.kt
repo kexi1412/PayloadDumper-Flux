@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.MoreVert
@@ -60,6 +62,7 @@ import com.flux.payload.dumper.ui.components.CardGroup
 import com.flux.payload.dumper.ui.components.CategoryHeader
 import com.flux.payload.dumper.ui.components.ExtractFab
 import com.flux.payload.dumper.ui.components.FluxBackground
+import com.flux.payload.dumper.ui.components.IconBox
 import com.flux.payload.dumper.ui.components.InfoRow
 import com.flux.payload.dumper.ui.components.PartitionRow
 import com.flux.payload.dumper.ui.components.PermissionDialog
@@ -95,9 +98,6 @@ fun DumperScreen(vm: DumperViewModel) {
         snackbar?.let { snackbarHostState.showSnackbar(it); vm.consumeSnackbar() }
     }
 
-    // ACTION_OPEN_DOCUMENT hands back a persistable content:// URI we can always read (no fragile
-    // real-path mapping, no MANAGE_EXTERNAL_STORAGE just to pick a file). We persist the read grant
-    // so a restored input still parses after an app restart.
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         uri?.let {
             runCatching {
@@ -125,7 +125,6 @@ fun DumperScreen(vm: DumperViewModel) {
     }
     fun doParse() {
         val t = input.trim()
-        // http and content:// are read without all-files-access; only a raw filesystem path needs it.
         if (t.startsWith("http") || t.startsWith("content://")) vm.parse() else requireStorage { vm.parse() }
     }
 
@@ -152,7 +151,7 @@ fun DumperScreen(vm: DumperViewModel) {
         ) { padding ->
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding(), bottom = 110.dp),
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = padding.calculateTopPadding(), bottom = 120.dp),
                 verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
                 item { CategoryHeader(stringResource(R.string.cat_source)) }
@@ -180,7 +179,7 @@ fun DumperScreen(vm: DumperViewModel) {
                             CardGroup {
                                 partitions.forEachIndexed { i, p ->
                                     PartitionRow(info = p, onExtract = { requireStorage { vm.extract(p.partitionName) } })
-                                    if (i < partitions.lastIndex) RowDivider(startInset = 74.dp)
+                                    if (i < partitions.lastIndex) RowDivider(startInset = 78.dp)
                                 }
                             }
                         }
@@ -246,32 +245,43 @@ private fun InputCard(
     parsing: Boolean,
     onParse: () -> Unit,
 ) {
+    val flux = LocalFluxColors.current
     CardGroup {
         val browseIcon: (@Composable () -> Unit)? = if (mode == 0) {
             { IconButton(onClick = onBrowse) { Icon(Icons.Rounded.FolderOpen, contentDescription = stringResource(R.string.action_browse)) } }
         } else {
             null
         }
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(20.dp)) {
             SegmentedToggle(options = listOf(stringResource(R.string.source_local), stringResource(R.string.source_network)), selectedIndex = mode, onSelect = onModeChange)
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(16.dp))
             OutlinedTextField(
                 value = value,
                 onValueChange = onValueChange,
                 placeholder = { Text(stringResource(if (mode == 0) R.string.input_hint_local else R.string.input_hint_network)) },
+                leadingIcon = {
+                    IconBox(
+                        icon = if (mode == 0) Icons.Rounded.FolderOpen else Icons.Rounded.CloudUpload,
+                        contentDescription = null,
+                        tint = if (mode == 0) flux.iconLocal else flux.iconUrl,
+                        bgColor = Color.Transparent,
+                        size = 28.dp,
+                        iconSize = 18.dp,
+                    )
+                },
                 trailingIcon = browseIcon,
                 singleLine = false,
                 maxLines = 3,
                 shape = RoundedCornerShape(FluxRadius.Field),
                 modifier = Modifier.fillMaxWidth(),
                 colors = TextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    focusedIndicatorColor = MaterialTheme.colorScheme.primary,
+                    focusedContainerColor = flux.fieldBg,
+                    unfocusedContainerColor = flux.fieldBg,
+                    focusedIndicatorColor = flux.accent,
                     unfocusedIndicatorColor = Color.Transparent,
                 ),
             )
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(16.dp))
             AccentButton(text = stringResource(if (parsing) R.string.action_parsing else R.string.action_parse), onClick = onParse, enabled = !parsing)
         }
     }
@@ -281,8 +291,7 @@ private fun InputCard(
 private fun OtaSummaryCard(info: ArchiveInfo) {
     val flux = LocalFluxColors.current
     CardGroup {
-        // filename + block size as a two-line header row
-        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)) {
             Text(
                 info.fileName,
                 style = MaterialTheme.typography.titleMedium,
@@ -292,15 +301,15 @@ private fun OtaSummaryCard(info: ArchiveInfo) {
             )
             Text(
                 stringResource(R.string.block_size, info.blockSize),
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.bodyMedium,
                 color = flux.labelSecondary,
             )
         }
-        RowDivider(startInset = 20.dp)
+        RowDivider(startInset = 24.dp)
         InfoRow(stringResource(R.string.summary_file_size), formatSize(info.fileSize))
-        RowDivider(startInset = 20.dp)
+        RowDivider(startInset = 24.dp)
         InfoRow(stringResource(R.string.summary_security_patch), info.securityPatchLevel.ifBlank { "—" })
-        RowDivider(startInset = 20.dp)
+        RowDivider(startInset = 24.dp)
         InfoRow(stringResource(R.string.summary_partitions), "${info.partitionCount}")
     }
 }
@@ -328,9 +337,9 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit) {
 private fun ErrorCard(message: String) {
     val flux = LocalFluxColors.current
     CardGroup {
-        Column(Modifier.padding(20.dp)) {
+        Column(Modifier.padding(24.dp)) {
             Text(stringResource(R.string.parse_failed), style = MaterialTheme.typography.titleMedium, color = flux.danger)
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(8.dp))
             Text(message, style = MaterialTheme.typography.bodyMedium, color = flux.labelSecondary)
         }
     }

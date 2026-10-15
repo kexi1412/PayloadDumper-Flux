@@ -26,7 +26,10 @@ import androidx.compose.ui.unit.dp
 import com.flux.payload.dumper.ui.theme.FluxRadius
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
 
-/** Primary solid-accent filled button (COUIButton) — the parse / dialog-confirm CTA. */
+/**
+ * COUI 17 主按钮——实心强调填充（COUIButton）。解析 / 对话框确认的 CTA。
+ * 圆角增大到 16dp，高度保持 50dp。
+ */
 @Composable
 fun AccentButton(
     text: String,
@@ -38,7 +41,7 @@ fun AccentButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (pressed && enabled) 0.98f else 1f,
+        targetValue = if (pressed && enabled) 0.97f else 1f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
         label = "press",
     )
@@ -62,7 +65,10 @@ fun AccentButton(
     }
 }
 
-/** Compact tonal button used for list-row actions like 提取 (COUI borderless / tint button). */
+/**
+ * 紧凑着色按钮，用于列表行操作如"提取"（COUI borderless / tint button）。
+ * COUI 17 圆角增大到 12dp。
+ */
 @Composable
 fun TonalButton(
     text: String,
@@ -77,10 +83,10 @@ fun TonalButton(
     Box(
         modifier = modifier
             .scale(scale)
-            .clip(RoundedCornerShape(FluxRadius.Pill))
+            .clip(RoundedCornerShape(12.dp))
             .background(if (enabled) flux.accentContainer else flux.fieldBg)
             .clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 8.dp),
+            .padding(horizontal = 18.dp, vertical = 9.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -91,7 +97,7 @@ fun TonalButton(
     }
 }
 
-/** Human-readable byte size, matching the reference app's rounding. */
+/** 人类可读的字节大小，匹配参考 app 的四舍五入。 */
 fun formatSize(bytes: Long): String = when {
     bytes < 1000 -> "$bytes B"
     bytes < 1000L * 1000 -> "%d KB".format(bytes / 1024)

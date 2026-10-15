@@ -55,7 +55,7 @@ private fun FluxDialog(onDismiss: () -> Unit, content: @Composable ColumnScope.(
             color = MaterialTheme.colorScheme.surface,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Column(modifier = Modifier.padding(24.dp), content = content)
+            Column(modifier = Modifier.padding(28.dp), content = content)
         }
     }
 }
@@ -86,7 +86,7 @@ fun SettingsDialog(onDismiss: () -> Unit) {
                 value = ua, onValueChange = { ua = it },
                 label = { Text(stringResource(R.string.label_user_agent)) },
                 singleLine = true,
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(FluxRadius.Field),
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -197,7 +197,7 @@ fun RelinkDialog(
         properties = DialogProperties(dismissOnClickOutside = false, dismissOnBackPress = false),
     ) {
         Surface(shape = RoundedCornerShape(FluxRadius.Dialog), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(24.dp)) {
+            Column(modifier = Modifier.padding(28.dp)) {
                 Text(stringResource(R.string.relink_title), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.height(10.dp))
                 Text(
@@ -210,7 +210,7 @@ fun RelinkDialog(
                     value = url, onValueChange = { url = it },
                     label = { Text(stringResource(R.string.relink_input_label)) },
                     singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(FluxRadius.Field),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(20.dp))

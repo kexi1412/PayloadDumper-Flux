@@ -2,6 +2,7 @@ package com.flux.payload.dumper.ui.components
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -21,7 +22,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,9 +40,9 @@ import com.flux.payload.dumper.ui.theme.FluxRadius
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
 
 /**
- * ColorOS-16 card list background: a flat pastel-grey wash (coui_color_background_with_card).
- * The redesign drops the old glassmorphism aurora in favour of the OS's plain surface so the
- * white grouped cards read as native Settings groups.
+ * ColorOS 17 卡片列表背景：柔和暖灰底色（coui_color_background_with_card）。
+ * COUI 17 相比 16 去掉了所有玻璃质感，使用更纯净的平面表面，让白色分组卡片
+ * 读作原生设置组。
  */
 @Composable
 fun FluxBackground(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
@@ -53,8 +53,10 @@ fun FluxBackground(modifier: Modifier = Modifier, content: @Composable BoxScope.
 }
 
 /**
- * A rounded white group card — the primitive the whole list is built from. Children are stacked
- * in a Column; use [RowDivider] between rows to get ColorOS's inset hairlines.
+ * COUI 17 分组圆角卡片——整个列表的基础构件。子项在 Column 中堆叠；
+ * 行之间用 [RowDivider] 获得 COUI 的内嵌发丝分割线。
+ *
+ * COUI 17 相比 16：圆角从 17dp 增大到 22dp，暗色模式加了极淡轮廓。
  */
 @Composable
 fun CardGroup(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
@@ -63,35 +65,46 @@ fun CardGroup(modifier: Modifier = Modifier, content: @Composable ColumnScope.()
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(FluxRadius.Card))
-            .background(flux.card),
+            .background(flux.card)
+            .border(0.5.dp, flux.cardOutline, RoundedCornerShape(FluxRadius.Card)),
         content = content,
     )
 }
 
-/** Inset hairline divider between rows inside a [CardGroup] (coui_color_divider). */
+/**
+ * 卡片内行之间的内嵌发丝分割线（coui_color_divider）。
+ * COUI 17 的分割线更淡、更细，几乎不可见。
+ */
 @Composable
-fun RowDivider(startInset: Dp = 20.dp, endInset: Dp = 0.dp) {
+fun RowDivider(startInset: Dp = 24.dp, endInset: Dp = 0.dp) {
     val flux = LocalFluxColors.current
     HorizontalDivider(
         modifier = Modifier.padding(start = startInset, end = endInset),
-        thickness = 1.dp,
+        thickness = 0.5.dp,
         color = flux.divider,
     )
 }
 
-/** Small grey caption sitting above a card group (support_preference_category_title_size 12 sp). */
+/**
+ * 卡片组上方的小灰字标题（support_preference_category_title_size 13sp）。
+ * COUI 17 间距更宽松：top 从 18dp 增到 22dp。
+ */
 @Composable
 fun CategoryHeader(text: String, modifier: Modifier = Modifier) {
     val flux = LocalFluxColors.current
     Text(
         text = text,
-        style = MaterialTheme.typography.labelMedium,
+        style = MaterialTheme.typography.labelSmall,
         color = flux.labelSecondary,
-        modifier = modifier.padding(start = 24.dp, end = 24.dp, top = 18.dp, bottom = 8.dp),
+        modifier = modifier.padding(start = 28.dp, end = 28.dp, top = 22.dp, bottom = 10.dp),
     )
 }
 
-/** Label-left / value-right info row (device-info style), used for the OTA summary. */
+/**
+ * COUI 17 assignment 行——标题左 / 值右对齐同行。
+ * 这是 COUI 17 preference_assignment_in_right 布局的 Compose 等价物。
+ * 值文本使用 labelMedium（14sp Medium）而非旧的 bodyMedium。
+ */
 @Composable
 fun InfoRow(
     label: String,
@@ -102,8 +115,8 @@ fun InfoRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 56.dp)
-            .padding(horizontal = 20.dp, vertical = 14.dp),
+            .heightIn(min = 60.dp)
+            .padding(horizontal = 24.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -112,17 +125,20 @@ fun InfoRow(
             color = flux.labelPrimary,
             modifier = Modifier.weight(1f),
         )
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(16.dp))
         Text(
             value,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.labelMedium,
             color = valueColor,
             textAlign = TextAlign.End,
         )
     }
 }
 
-/** ColorOS segmented control (COUITabView): grey track with a white sliding thumb. */
+/**
+ * COUI 17 分段控件（COUITabView）：灰色轨道 + 白色滑块。
+ * 圆角增大到 12dp，滑块圆角 9dp，轨道 padding 加宽。
+ */
 @Composable
 fun SegmentedToggle(
     options: List<String>,
@@ -134,10 +150,10 @@ fun SegmentedToggle(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(flux.fieldBg)
-            .padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         options.forEachIndexed { i, label ->
             val selected = i == selectedIndex
@@ -146,25 +162,58 @@ fun SegmentedToggle(
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(9.dp))
                     .background(bg)
                     .clickable { onSelect(i) }
-                    .padding(vertical = 9.dp),
+                    .padding(vertical = 10.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(label, style = MaterialTheme.typography.labelSmall, color = fg)
+                Text(label, style = MaterialTheme.typography.labelMedium, color = fg)
             }
         }
     }
 }
 
-/** Solid-accent extended floating button (COUIFloatingButton) with icon + label. */
+/**
+ * COUI 17 图标圆角方块容器——COUIRoundImageView 的 Compose 等价物。
+ * 给图标包一层柔和的着色圆角方块背景，是 COUI 17 相比 16 最显著的视觉变化。
+ */
+@Composable
+fun IconBox(
+    icon: ImageVector,
+    contentDescription: String?,
+    tint: Color = LocalFluxColors.current.accent,
+    bgColor: Color = LocalFluxColors.current.iconBoxBg,
+    modifier: Modifier = Modifier,
+    size: Dp = 36.dp,
+    iconSize: Dp = 20.dp,
+) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(RoundedCornerShape(FluxRadius.IconBox))
+            .background(bgColor),
+        contentAlignment = Alignment.Center,
+    ) {
+        androidx.compose.material3.Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(iconSize),
+        )
+    }
+}
+
+/**
+ * COUI 17 实心强调悬浮按钮（COUIFloatingButton）。
+ * 圆角增大到 16dp，高度保持 54dp。
+ */
 @Composable
 fun ExtractFab(text: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val flux = LocalFluxColors.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by androidx.compose.animation.core.animateFloatAsState(if (pressed) 0.95f else 1f, label = "fab")
+    val scale by androidx.compose.animation.core.animateFloatAsState(if (pressed) 0.96f else 1f, label = "fab")
     Row(
         modifier = modifier
             .scale(scale)
@@ -172,10 +221,10 @@ fun ExtractFab(text: String, icon: ImageVector, onClick: () -> Unit, modifier: M
             .clip(RoundedCornerShape(FluxRadius.Button))
             .background(flux.accent)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 22.dp),
+            .padding(horizontal = 24.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = null, tint = flux.onAccent, modifier = Modifier.size(20.dp))
+        androidx.compose.material3.Icon(icon, contentDescription = null, tint = flux.onAccent, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(10.dp))
         Text(text, style = MaterialTheme.typography.labelLarge, color = flux.onAccent, textAlign = TextAlign.Center)
     }

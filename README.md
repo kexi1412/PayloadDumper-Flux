@@ -18,7 +18,7 @@ Extract partition images from **full** Android A/B (`payload.bin`) OTAs — in p
 
 **Payload Dumper · Flux** pulls individual partition images (`boot.img`, `system.img`, `vendor.img`, …) straight out of a full A/B OTA package. Point it at a local `payload.bin` / OTA zip, or paste an OTA **direct link** — it parses the archive over HTTP Range requests and never has to download the whole package first.
 
-The extraction engine is a from-scratch rewrite built around a **stateless positioned-read source** and a real thread pool, closely following the design of `payload-dumper-c`. The interface is an in-house take on the **ColorOS 16 “Flux”** glassmorphism design language, built with Jetpack Compose + Material 3.
+The extraction engine is a from-scratch rewrite built around a **stateless positioned-read source** and a real thread pool, closely following the design of `payload-dumper-c`. The interface follows the **ColorOS 17 (COUI 17)** card-list design language — rounded 22 dp grouped cards, assignment-style info rows, and tinted rounded-square icon containers — built with Jetpack Compose + Material 3.
 
 ## Highlights
 
@@ -51,7 +51,7 @@ core/
   Net.kt              OkHttp client (injects custom UA / headers)
 model/      Data models shared between UI and engine
 viewmodel/  DumperViewModel: parse / extract / state orchestration (StateFlow)
-ui/         ColorOS 16 Flux theme + components + main screen
+ui/         ColorOS 17 (COUI 17) theme + components + main screen
 ```
 
 **Key design:** every read through `PayloadSource` is a **stateless positioned read** (`readAt(offset, len)`), mirroring `payload-dumper-c`'s `source_interface.h` (clone / read-at-offset / destroy). That's what lets multiple workers extract concurrently over both file and network sources.
@@ -89,7 +89,7 @@ Needs **All files access** (`MANAGE_EXTERNAL_STORAGE`) to read local packages fr
 - Engine reference: `payload-dumper-c` (thread pool / stateless source / scattered-extent writes).
 - Dependencies: Jetpack Compose, OkHttp, Apache Commons Compress, tukaani-xz, aircompressor, protobuf.
 
-The UI layout is designed for this project; the palette follows the in-house ColorOS 16 “Flux” theme.
+The UI layout is designed for this project; the palette follows the ColorOS 17 (COUI 17) design system extracted from the native Settings app.
 
 ## License
 
