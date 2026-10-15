@@ -22,7 +22,15 @@ jobs:
           java-version: '21'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          # The runner already ships a full Android SDK with cmdline-tools,
+          # build-tools and platform-tools. The setup-android action installs
+          # the deprecated standalone "tools" package which Google removed from
+          # the repository on 2026-10-15 ("Failed to find package 'tools'"),
+          # so we accept licenses directly and skip the action.
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
