@@ -75,7 +75,9 @@ fun PartitionRow(info: PartitionInfo, onExtract: () -> Unit) {
         // 文字区：标题 + 摘要，weight=1
         Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) {
             Text(
-                info.partitionName,
+                // Short name. The row's key may be archive-qualified (a Honor package nests
+                // three archives that reuse basenames), and that key would be ellipsised away.
+                info.displayTitle,
                 style = MaterialTheme.typography.titleMedium,
                 color = flux.labelPrimary,
                 maxLines = 1,
@@ -148,6 +150,12 @@ private fun subtitleFor(info: PartitionInfo): String {
             else -> stringResource(R.string.tile_extracted, formatSize(info.size))
         }
         ExtractState.ERROR -> info.message.ifBlank { stringResource(R.string.state_extract_failed) }
-        else -> stringResource(R.string.tile_idle, formatSize(info.size), formatSize(info.compressedSize))
+        // Idle also names the nested archive this entry came from, so two rows that share a
+        // basename (`preload.img`, `version.img`) are distinguishable before extracting.
+        else -> {
+            val idle = stringResource(R.string.tile_idle, formatSize(info.size), formatSize(info.compressedSize))
+            val archive = info.subtitle.substringBefore(" :: ", "").trim()
+            if (archive.isNotEmpty() && archive != info.displayTitle) "$archive · $idle" else idle
+        }
     }
 }

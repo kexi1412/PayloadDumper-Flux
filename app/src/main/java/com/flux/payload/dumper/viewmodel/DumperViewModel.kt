@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import chromeos_update_engine.UpdateMetadata.PartitionUpdate
 import com.flux.payload.dumper.DumperApplication
 import com.flux.payload.dumper.R
+import com.flux.payload.dumper.core.Diagnostics
 import com.flux.payload.dumper.core.FileSource
 import com.flux.payload.dumper.core.HttpSource
 import com.flux.payload.dumper.core.NestedZipStream
@@ -82,7 +83,18 @@ class DumperViewModel : ViewModel() {
 
     val partitions: StateFlow<List<PartitionInfo>> =
         combine(_partitions, _search) { list, q ->
-            if (q.isBlank()) list else list.filter { it.partitionName.contains(q, ignoreCase = true) }
+            if (q.isBlank()) {
+                list
+            } else {
+                // Match every name a row can show. `partitionName` is only the key — for nested
+                // entries it is archive-qualified, so a user typing the short name they see in
+                // the list ("preload.img") would otherwise get nothing back.
+                list.filter {
+                    it.partitionName.contains(q, ignoreCase = true) ||
+                        it.displayTitle.contains(q, ignoreCase = true) ||
+                        it.subtitle.contains(q, ignoreCase = true)
+                }
+            }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val _snackbar = MutableStateFlow<String?>(null)
@@ -111,6 +123,10 @@ class DumperViewModel : ViewModel() {
         val raw = _input.value.trim()
         if (raw.isEmpty()) { _snackbar.value = str(R.string.msg_input_required); return }
         _parseState.value = ParseState.Parsing("Opening archive…")
+        // Held outside the runCatching so the failure path can still probe the archive that was
+        // actually opened. Assigning only on success (as before) meant a parse failure had
+        // nothing to report on — exactly the case the report exists for.
+        var opened: PayloadSource? = null
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
@@ -127,6 +143,10 @@ class DumperViewModel : ViewModel() {
                             FileSource(f)
                         }
                     }
+                    opened = src
+                    _parseState.value = ParseState.Parsing(
+                        "Measuring ${src.fileName()} — ${src.size / (1 shl 20)} MB…"
+                    )
                     val result = UniversalParser.parse(src) { msg ->
                         _parseState.value = ParseState.Parsing(msg)
                     }
@@ -156,21 +176,44 @@ class DumperViewModel : ViewModel() {
                     }
                     is ParseResult.RawEntries -> {
                         payload = null
-                        result.entries.forEach { e -> rawEntries[e.name] = e }
+                        // Keyed by display name so entries that share a basename across
+                        // different nested archives stay distinct. The Honor package really
+                        // does collide: `preload.img` is 2,135,482,852 bytes in
+                        // update_sd_preload_… and 28,784 bytes in update_sd_base.zip, and
+                        // `version.img` is 258,160 vs 28,784. Keying on the bare basename
+                        // made one silently overwrite the other, so the row the user tapped
+                        // could extract a different file than the one it listed.
+                        result.entries.forEach { e -> rawEntries[displayKey(e)] = e }
                         _partitions.value = result.entries.map { e ->
                             PartitionInfo(
-                                partitionName = e.name,
+                                partitionName = displayKey(e),
                                 size = e.size,
                                 compressedSize = e.compressedSize,
                                 sha256 = "",
+                                title = e.name,
+                                subtitle = e.displayName,
                             )
                         }
                         _parseState.value = ParseState.Ready(result.archiveInfo)
                     }
                 }
             }.onFailure { e ->
-                _parseState.value = ParseState.Failed(e.message ?: str(R.string.parse_failed))
-                _snackbar.value = e.message ?: str(R.string.parse_failed)
+                // `runCatching` is `catch (Throwable)`, so this also lands here for
+                // OutOfMemoryError and StackOverflowError — both of which carry a null
+                // message. Reporting `e.message` alone therefore collapsed every distinct
+                // device-side failure into the same generic string. Name the class and walk
+                // the cause chain instead, and drop a full report on disk.
+                val report = Diagnostics.dump(DumperApplication.appContext, opened, "parse", e)
+                val detail = buildString {
+                    append(Diagnostics.describe(e))
+                    if (report != null) append("\n\n报告已写入：${report.absolutePath}")
+                }
+                _parseState.value = ParseState.Failed(detail)
+                _snackbar.value = if (Diagnostics.isOutOfMemory(e)) {
+                    str(R.string.err_out_of_memory)
+                } else {
+                    Diagnostics.describe(e).lineSequence().first()
+                }
             }
         }
     }
@@ -211,11 +254,14 @@ class DumperViewModel : ViewModel() {
                         is ParseResult.Origin.NestedZip -> {
                             // Stream the nested ZIP once and pull this one entry out of it.
                             // No temp file: the inner deflate stream is inflated inline.
+                            // Written into the archive's own subdirectory so a basename that
+                            // also exists in another nested archive cannot clobber it.
+                            val nestedDir = nestedOutputDir(src, origin.ref)
                             val produced = NestedZipStream.extract(
                                 outer = src,
                                 ref = origin.ref,
                                 targets = listOf(origin.inner),
-                                outDir = outDir,
+                                outDir = nestedDir,
                                 onProgress = { done, total ->
                                     update(partitionName) {
                                         it.copy(progress = if (total > 0) done.toFloat() / total else 0f)
@@ -226,6 +272,7 @@ class DumperViewModel : ViewModel() {
                                 ?: produced.values.firstOrNull()
                                 ?: throw IOException("Entry '${origin.inner.name}' not found in nested ZIP")
                             if (written.absolutePath != outFile.absolutePath) {
+                                outFile.parentFile?.mkdirs()
                                 written.copyTo(outFile, overwrite = true)
                                 written.delete()
                             }
@@ -386,7 +433,10 @@ class DumperViewModel : ViewModel() {
     private suspend fun extractNestedBatch(ref: NestedZipStream.Ref, names: List<String>) =
         withContext(Dispatchers.IO) {
             val src = source ?: return@withContext
-            val outDir = sessionOutputDir ?: resolveOutputDir(src.fileName()).also { sessionOutputDir = it }
+            // One subdirectory per nested archive. The three archives a Honor package carries
+            // reuse basenames (`preload.img`, `version.img`, `super_metadata.img`, …), so
+            // sharing a directory would let a later archive overwrite an earlier one's file.
+            val outDir = nestedOutputDir(src, ref)
 
             val pending = names.mapNotNull { rawEntries[it] }.mapNotNull { e ->
                 val o = e.origin
@@ -411,11 +461,20 @@ class DumperViewModel : ViewModel() {
                     },
                 )
             }.onSuccess { produced ->
-                val byInnerName = produced.mapKeys { it.key.substringAfterLast('/') }
+                // Match on each row's own inner name. The previous check compared the row's
+                // display key against inner names, which can never match once nested entries
+                // are qualified by the archive that holds them — every row would be reported
+                // as failed even though the files were written.
+                var missing = 0
                 names.forEach { n ->
-                    if (byInnerName.containsKey(n) || produced.values.any { it.name == n }) {
+                    val inner = (rawEntries[n]?.origin as? ParseResult.Origin.NestedZip)?.inner?.name
+                    val ok = inner != null &&
+                        (produced.containsKey(inner) ||
+                            produced.values.any { it.name == inner.substringAfterLast('/') })
+                    if (ok) {
                         update(n) { it.copy(extractState = ExtractState.DONE, progress = 1f, verifyState = VerifyState.SKIPPED) }
                     } else {
+                        missing++
                         update(n) {
                             it.copy(
                                 extractState = ExtractState.ERROR,
@@ -424,16 +483,32 @@ class DumperViewModel : ViewModel() {
                         }
                     }
                 }
-                _snackbar.value = "Extracted ${produced.size} image(s) from nested archive"
+                _snackbar.value = if (missing == 0) {
+                    str(R.string.msg_nested_extracted, produced.size)
+                } else {
+                    str(R.string.msg_nested_partial, produced.size, missing)
+                }
             }.onFailure { e ->
+                val report = Diagnostics.dump(DumperApplication.appContext, src, "nested-extract", e)
                 names.forEach { n ->
                     update(n) {
-                        it.copy(extractState = ExtractState.ERROR, message = e.message ?: str(R.string.state_extract_failed))
+                        it.copy(
+                            extractState = ExtractState.ERROR,
+                            message = Diagnostics.describe(e).lineSequence().first() +
+                                (report?.let { "\n报告：${it.absolutePath}" } ?: ""),
+                        )
                     }
                 }
-                _snackbar.value = e.message ?: str(R.string.state_extract_failed)
+                _snackbar.value = Diagnostics.describe(e).lineSequence().first()
             }
         }
+
+    /** `Download/PayloadDumper/<rom>/<nested-archive>/` so colliding basenames stay apart. */
+    private fun nestedOutputDir(src: PayloadSource, ref: NestedZipStream.Ref): File {
+        val base = sessionOutputDir ?: resolveOutputDir(src.fileName()).also { sessionOutputDir = it }
+        val leaf = ref.outerName.substringAfterLast('/').removeSuffix(".zip").ifBlank { "nested" }
+        return File(base, leaf)
+    }
 
     private fun resolveOutputDir(fileName: String): File {
         val romName = fileName.removeSuffix(".zip").removeSuffix(".bin")
@@ -462,6 +537,19 @@ class DumperViewModel : ViewModel() {
         is ParseResult.CrAU -> result.payload.fileName
         is ParseResult.RawEntries -> result.archiveInfo.fileName
     }
+
+    /**
+     * Label used both in the list and as the [rawEntries] key.
+     *
+     * [ParseResult.RawEntry.displayName] already qualifies nested entries with the archive
+     * that holds them ("update_sd_base.zip :: image/system.img"), because basenames are not
+     * unique across the three nested ZIPs a Honor package carries — `preload.img` alone
+     * appears as both 2,135,482,852 and 28,784 bytes. Keying on the bare basename made the
+     * last one parsed overwrite the others, so tapping a row could extract a different file
+     * than the row described.
+     */
+    private fun displayKey(e: ParseResult.RawEntry): String =
+        e.displayName.ifBlank { e.name }
 
     private fun closeSource() {
         runCatching { source?.close() }

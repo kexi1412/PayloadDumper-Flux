@@ -47,6 +47,9 @@
 
     <!-- Parse error card -->
     <string name="parse_failed">解析失败</string>
+    <string name="state_parsing">解析中…</string>
+    <string name="err_out_of_memory">内存不足：该包内层需流式解压，请关闭后台应用后重试</string>
+    <string name="err_report_hint">完整诊断报告已保存到 Download/PayloadDumper/diagnostics/</string>
 
     <!-- Settings dialog -->
     <string name="settings_title">下载与提取设置</string>
@@ -87,4 +90,6 @@
     <string name="msg_relink_failed">换链接失败</string>
     <string name="msg_cancelled_progress_kept">已取消（未完成，进度已保留，可重新提取续传）</string>
     <string name="msg_all_done">全部提取完成</string>
+    <string name="msg_nested_extracted">已从嵌套包提取 %1$d 个镜像</string>
+    <string name="msg_nested_partial">已提取 %1$d 个镜像，%2$d 个失败</string>
 </resources>

@@ -386,17 +386,43 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit) {
     )
 }
 
+/**
+ * Parse-failure card.
+ *
+ * The heading used to be a fixed `R.string.parse_failed`, so every distinct failure — a
+ * truncated file, an unreadable central directory, an allocation failure — looked identical
+ * and the specific reason was buried in small secondary text. The first line of [message] now
+ * becomes the heading, so the cause is the first thing visible.
+ */
 @Composable
 private fun ErrorCard(message: String) {
     val flux = LocalFluxColors.current
+    val lines = message.trim().lines()
+    val heading = lines.firstOrNull()?.takeIf { it.isNotBlank() } ?: stringResource(R.string.parse_failed)
+    val rest = lines.drop(1).joinToString("\n").trim()
+
     CardGroup {
         Column(modifier = Modifier.padding(start = 32.dp, end = 32.dp, top = 20.dp, bottom = 20.dp)) {
-            Text(stringResource(R.string.parse_failed), style = MaterialTheme.typography.titleMedium, color = flux.danger)
             Text(
-                message,
-                style = MaterialTheme.typography.bodyMedium,
-                color = flux.labelSecondary,
-                modifier = Modifier.padding(top = 6.dp),
+                heading,
+                style = MaterialTheme.typography.titleMedium,
+                color = flux.danger,
+            )
+            if (rest.isNotEmpty()) {
+                Text(
+                    rest,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = flux.labelSecondary,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+            // A report is the only thing that can be acted on after the fact, so it is called
+            // out explicitly rather than left as the last line of a long error string.
+            Text(
+                stringResource(R.string.err_report_hint),
+                style = MaterialTheme.typography.labelMedium,
+                color = flux.labelTertiary,
+                modifier = Modifier.padding(top = 10.dp),
             )
         }
     }

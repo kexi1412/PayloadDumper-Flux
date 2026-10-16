@@ -15,8 +15,11 @@ android {
         applicationId = "com.flux.payload.dumper"
         minSdk = 30
         targetSdk = 35
-        versionCode = 20
-        versionName = "2.0"
+        // Bumped with every release so the installed build can be told apart.
+        // versionCode/versionName were pinned at 20 / "2.0" across build-20 and build-21,
+        // which made "which APK am I actually running?" unanswerable.
+        versionCode = 22
+        versionName = "2.2"
         vectorDrawables { useSupportLibrary = true }
     }
 

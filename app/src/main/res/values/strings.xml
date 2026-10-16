@@ -48,6 +48,8 @@
 
     <!-- Parse error card -->
     <string name="parse_failed">Parse failed</string>
+    <string name="err_out_of_memory">Out of memory — the inner archive is streamed, so close background apps and retry</string>
+    <string name="err_report_hint">A full diagnostics report was saved to Download/PayloadDumper/diagnostics/</string>
 
     <!-- Settings dialog -->
     <string name="settings_title">Download &amp; extraction settings</string>
@@ -88,4 +90,6 @@
     <string name="msg_relink_failed">Failed to switch link</string>
     <string name="msg_cancelled_progress_kept">Cancelled (incomplete; progress saved, you can resume)</string>
     <string name="msg_all_done">All extractions complete</string>
+    <string name="msg_nested_extracted">Extracted %1$d image(s) from the nested archive</string>
+    <string name="msg_nested_partial">Extracted %1$d image(s), %2$d failed</string>
 </resources>

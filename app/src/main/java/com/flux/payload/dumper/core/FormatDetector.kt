@@ -90,8 +90,17 @@ object FormatDetector {
     private fun detectZip(source: PayloadSource): ArchiveFormat {
         val entries = try {
             ZipScanner.scanEntries(source)
-        } catch (e: IOException) {
-            return ArchiveFormat.Unknown
+        } catch (e: Throwable) {
+            // Do NOT swallow this. Returning Unknown here is what turned every distinct
+            // failure — a short read, an out-of-range central directory, a measured EOCD
+            // offset that disagrees with the file — into the same generic
+            // "Unrecognised archive" text, with the real cause discarded. Rethrow it
+            // annotated so the error card can show what actually went wrong.
+            throw IOException(
+                "ZIP central directory unreadable in '${source.fileName()}' " +
+                    "(${source.size} bytes): ${Diagnostics.describe(e)}",
+                e,
+            )
         }
 
         // Check for payload.bin first

@@ -76,6 +76,17 @@ object NestedZipStream {
         /** True when the parent stores the nested ZIP deflated; false when it is stored flat. */
         val deflated: Boolean,
         val allEntries: List<ZipEntryInfo>,
+        /**
+         * Full path of the nested ZIP inside its parent, e.g.
+         * `Software/dload/update_sd_base.zip`.
+         *
+         * Needed because basenames are **not** unique across the nested archives a Honor
+         * package carries: `image/preload.img` exists in both `update_sd_preload_…` (2.1 GB)
+         * and `update_sd_base.zip` (28 KB), so extracting by basename alone would silently
+         * overwrite one with the other. Callers derive a per-archive output directory from
+         * this.
+         */
+        val outerName: String,
     )
 
     /** Result of [scan]. */
@@ -149,7 +160,7 @@ object NestedZipStream {
         if (entries.isEmpty()) throw IOException("Nested ZIP '${nestedEntry.name}' contains no entries")
 
         return ScanResult(
-            ref = Ref(dataOffset, compressedSize, window.totalOut, deflated, entries),
+            ref = Ref(dataOffset, compressedSize, window.totalOut, deflated, entries, nestedEntry.name),
             images = entries.filter { isFirmwareImage(it.name) },
         )
     }

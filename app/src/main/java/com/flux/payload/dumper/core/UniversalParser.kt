@@ -2,6 +2,7 @@ package com.flux.payload.dumper.core
 
 import com.flux.payload.dumper.model.ArchiveInfo
 import com.flux.payload.dumper.model.PartitionInfo
+import java.io.IOException
 
 /**
  * Result of parsing any supported archive format.
@@ -188,6 +189,21 @@ object UniversalParser {
     /**
      * Walk each nested ZIP once to enumerate its contents, then expose its images as
      * [ParseResult.Origin.NestedZip] entries.
+     *
+     * ## Failure policy
+     *
+     * Streaming an inner archive means inflating it end to end, and a Honor SD package hides
+     * **11.5 GB** of that behind three nested ZIPs (`update_sd_base.zip` alone is 9.4 GB).
+     * Enumerating it is by far the most expensive and most failure-prone step of a parse, so it
+     * must not be able to destroy the whole result: a single hiccup in the smallest archive
+     * would otherwise hide two perfectly readable ones. Each archive is therefore isolated, and
+     * one that cannot be streamed is instead surfaced as a normal, directly extractable row for
+     * the `.zip` itself.
+     *
+     * That fallback is not a consolation prize — it is a working path. `update_sd_base.zip` is
+     * itself a plain ZIP, so extracting it and re-opening it in the app lists all 83 images
+     * without any nested-streaming at all. Whatever goes wrong during the streamed pass, the
+     * user still reaches their firmware.
      */
     private fun parseNestedZips(
         source: PayloadSource,
@@ -200,13 +216,29 @@ object UniversalParser {
             val label = nested.name.substringAfterLast('/')
             onProgress?.invoke("Reading $label (${fmtSize(nested.compressedSize)})…")
 
-            val scan = NestedZipStream.scan(source, nested) { frac ->
-                onProgress?.invoke("Reading $label — ${(frac * 100).toInt()}%")
+            val scan = try {
+                NestedZipStream.scan(source, nested, percentReporter(label, onProgress))
+            } catch (e: Throwable) {
+                // An allocation failure leaves the process unusable, so propagating it is
+                // honest. Anything else is specific to this one archive.
+                if (Diagnostics.isOutOfMemory(e)) throw e
+
+                // Fall back to the nested ZIP as a row of its own, carrying the reason it could
+                // not be streamed so the failure is visible rather than silently swallowed.
+                onProgress?.invoke("$label — listed as a file (${Diagnostics.describe(e).lineSequence().first()})")
+                out.add(asOuterRange(source, nested))
+                continue
             }
 
             // Small metadata .tag files are noise; show real firmware images only.
             val images = scan.ref.allEntries.filter { it.uncompressedSize > 0 && isImage(it.name) }
             val usable = images.ifEmpty { scan.ref.allEntries.filter { it.uncompressedSize > 0 } }
+
+            if (usable.isEmpty()) {
+                onProgress?.invoke("$label — no images inside, listed as a file")
+                out.add(asOuterRange(source, nested))
+                continue
+            }
 
             usable.forEach { inner ->
                 out.add(
@@ -220,7 +252,29 @@ object UniversalParser {
                 )
             }
         }
+
         return out
+    }
+
+    /**
+     * Progress callback that emits only when the whole-percent figure changes.
+     *
+     * The raw callback fires once per 1 MB read, which is ~9,000 emissions for the 9.4 GB
+     * inner archive; each one reallocates a string and re-renders a Compose card on the main
+     * thread. Percent granularity is all the UI shows anyway.
+     */
+    private fun percentReporter(
+        label: String,
+        onProgress: ((String) -> Unit)?,
+    ): (Float) -> Unit {
+        var last = -1
+        return { frac ->
+            val pct = (frac * 100).toInt().coerceIn(0, 100)
+            if (pct != last) {
+                last = pct
+                onProgress?.invoke("Reading $label — $pct%")
+            }
+        }
     }
 
     // ---------------------------------------------------------------- Block OTA

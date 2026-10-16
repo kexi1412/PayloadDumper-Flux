@@ -79,11 +79,26 @@ class UriSource private constructor(
     override fun fileName(): String = displayName
 
     override fun readFully(offset: Long, buffer: ByteArray, bufOffset: Int, len: Int) {
+        if (len == 0) return
         val bb = ByteBuffer.wrap(buffer, bufOffset, len)
         var pos = offset
+        var stalls = 0
         while (bb.hasRemaining()) {
             val n = channel.read(bb, pos)
             if (n < 0) throw EOFException("Unexpected EOF at $pos (wanted ${offset + len})")
+            if (n == 0) {
+                // A seekable fd should never report 0 while bytes remain. Some SAF providers
+                // hand back a pipe-like descriptor where positional reads make no progress;
+                // without this guard `pos` never advances and the reader spins forever.
+                if (++stalls > MAX_STALLS) {
+                    throw IOException(
+                        "Stalled reading $len byte(s) at $pos — the document provider does not " +
+                            "support random access (read ${len - bb.remaining()} of $len)"
+                    )
+                }
+                continue
+            }
+            stalls = 0
             pos += n
         }
     }
@@ -92,14 +107,33 @@ class UriSource private constructor(
     override fun close() { runCatching { stream.close() } }
 
     companion object {
+        /** Positional reads that make no progress before the source is declared unusable. */
+        private const val MAX_STALLS = 8
+
         fun open(context: Context, uri: Uri): UriSource {
             val resolver = context.contentResolver
             val pfd = resolver.openFileDescriptor(uri, "r")
                 ?: throw IOException("Cannot open document: $uri")
             val stream = ParcelFileDescriptor.AutoCloseInputStream(pfd)
             val channel = stream.channel
-            val size = if (pfd.statSize >= 0) pfd.statSize else channel.size()
-            if (size <= 0L) { runCatching { stream.close() }; throw IOException("Empty or non-seekable document: $uri") }
+
+            // Prefer the descriptor's own length over the provider-reported statSize.
+            //
+            // Everything downstream is positional: the EOCD search reads the final 1 MB, and
+            // every central-directory offset is validated against `size`. If statSize is wrong
+            // — and providers do report a stale, truncated, or cached length for multi-gigabyte
+            // files — the tail window lands in the wrong place, no EOCD is found, and the whole
+            // parse fails with a message that looks like file corruption. `channel.size()` comes
+            // from the descriptor itself, so it is the authoritative value. statSize is kept
+            // only as a fallback for non-seekable descriptors that report 0.
+            val channelSize = runCatching { channel.size() }.getOrDefault(-1L)
+            val statSize = pfd.statSize
+            val size = if (channelSize > 0L) channelSize else statSize
+
+            if (size <= 0L) {
+                runCatching { stream.close() }
+                throw IOException("Empty or non-seekable document: $uri")
+            }
             val name = queryDisplayName(context, uri)
                 ?: uri.lastPathSegment?.substringAfterLast('/')?.ifBlank { null }
                 ?: "payload.bin"
