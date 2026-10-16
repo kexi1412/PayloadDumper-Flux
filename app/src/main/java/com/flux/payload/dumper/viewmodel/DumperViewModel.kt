@@ -104,6 +104,9 @@ class DumperViewModel : ViewModel() {
     private var parseResult: ParseResult? = null
     private val rawEntries = mutableMapOf<String, ParseResult.RawEntry>()  // for non-CrAU formats
 
+    /** Names already produced by a batched nested-ZIP pass, so extractAll() skips them. */
+    private val _extractedInBatch = mutableSetOf<String>()
+
     fun parse() {
         val raw = _input.value.trim()
         if (raw.isEmpty()) { _snackbar.value = str(R.string.msg_input_required); return }
@@ -135,6 +138,7 @@ class DumperViewModel : ViewModel() {
                 sessionOutputDir = resolveOutputDir(srcFileName(result))
                 resumeStates.clear()
                 rawEntries.clear()
+                _extractedInBatch.clear()
 
                 when (result) {
                     is ParseResult.CrAU -> {
@@ -331,17 +335,105 @@ class DumperViewModel : ViewModel() {
     fun extractAll() {
         val current = _partitions.value
         viewModelScope.launch {
+            // Batched fast path: entries sharing a nested ZIP are pulled out in ONE stream
+            // pass. Honour packages nest ~45 images inside a single 9 GB ZIP, so doing this
+            // per-entry would re-stream 9 GB forty-five times (~45 min); batching makes it one.
+            val batched = batchedNestedNames(current)
+            if (batched.isNotEmpty()) {
+                for ((ref, names) in batched) {
+                    if (names.all { name ->
+                            current.firstOrNull { it.partitionName == name }?.extractState == ExtractState.DONE
+                        }
+                    ) continue
+                    extractNestedBatch(ref, names)
+                    // A dead link aborts the whole batch; every remaining entry would fail too.
+                    if (_relink.value != null) return@launch
+                }
+            }
+
             for (p in current) {
+                if (_extractedInBatch.contains(p.partitionName)) continue
                 if (p.extractState == ExtractState.DONE) continue
                 extract(p.partitionName)
                 jobs[p.partitionName]?.join()
-                // If this partition stalled and is awaiting a new link, stop the batch — every
-                // remaining partition would fail on the same dead link.
                 if (_relink.value != null) return@launch
             }
             _snackbar.value = str(R.string.msg_all_done)
         }
     }
+
+    /**
+     * Group partitions that live inside the same nested ZIP, so they can share one stream pass.
+     * Only groups with more than one member are worth batching.
+     */
+    private fun batchedNestedNames(
+        current: List<PartitionInfo>,
+    ): Map<NestedZipStream.Ref, List<String>> {
+        val byRef = LinkedHashMap<NestedZipStream.Ref, MutableList<String>>()
+        for (p in current) {
+            val origin = rawEntries[p.partitionName]?.origin
+            if (origin is ParseResult.Origin.NestedZip) {
+                byRef.getOrPut(origin.ref) { mutableListOf() }.add(p.partitionName)
+            }
+        }
+        return byRef.filterValues { it.size > 1 }
+    }
+
+    /**
+     * Stream a nested ZIP once and extract every named entry in it, updating each row's
+     * progress from the shared pass.
+     */
+    private suspend fun extractNestedBatch(ref: NestedZipStream.Ref, names: List<String>) =
+        withContext(Dispatchers.IO) {
+            val src = source ?: return@withContext
+            val outDir = sessionOutputDir ?: resolveOutputDir(src.fileName()).also { sessionOutputDir = it }
+
+            val pending = names.mapNotNull { rawEntries[it] }.mapNotNull { e ->
+                val o = e.origin
+                if (o is ParseResult.Origin.NestedZip) o.inner else null
+            }
+            if (pending.isEmpty()) return@withContext
+
+            names.forEach { n ->
+                _extractedInBatch.add(n)
+                update(n) { it.copy(extractState = ExtractState.RUNNING, verifyState = VerifyState.NONE, message = "") }
+            }
+
+            runCatching {
+                NestedZipStream.extract(
+                    outer = src,
+                    ref = ref,
+                    targets = pending,
+                    outDir = outDir,
+                    onProgress = { done, total ->
+                        val frac = if (total > 0) done.toFloat() / total else 0f
+                        names.forEach { n -> update(n) { it.copy(progress = frac) } }
+                    },
+                )
+            }.onSuccess { produced ->
+                val byInnerName = produced.mapKeys { it.key.substringAfterLast('/') }
+                names.forEach { n ->
+                    if (byInnerName.containsKey(n) || produced.values.any { it.name == n }) {
+                        update(n) { it.copy(extractState = ExtractState.DONE, progress = 1f, verifyState = VerifyState.SKIPPED) }
+                    } else {
+                        update(n) {
+                            it.copy(
+                                extractState = ExtractState.ERROR,
+                                message = str(R.string.state_extract_failed),
+                            )
+                        }
+                    }
+                }
+                _snackbar.value = "Extracted ${produced.size} image(s) from nested archive"
+            }.onFailure { e ->
+                names.forEach { n ->
+                    update(n) {
+                        it.copy(extractState = ExtractState.ERROR, message = e.message ?: str(R.string.state_extract_failed))
+                    }
+                }
+                _snackbar.value = e.message ?: str(R.string.state_extract_failed)
+            }
+        }
 
     private fun resolveOutputDir(fileName: String): File {
         val romName = fileName.removeSuffix(".zip").removeSuffix(".bin")
