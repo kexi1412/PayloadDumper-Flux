@@ -187,7 +187,9 @@ object NestedZipStream {
         outDir.mkdirs()
 
         val todo = targets.sortedBy { it.localHeaderOffset }
-        val states = todo.map { TargetState(it, outDir) }
+        // One buffer for the whole pass; see TargetState.scratch.
+        val scratch = ByteArray(OUT_CHUNK)
+        val states = todo.map { TargetState(it, outDir, scratch) }
         val written = LinkedHashMap<String, File>()
 
         val inBuf = ByteArray(IO_CHUNK)
@@ -254,7 +256,19 @@ object NestedZipStream {
      * The local header is staged into [hdrBuf] rather than requiring it to sit inside a single
      * inflate output buffer, because it routinely straddles buffer boundaries for large entries.
      */
-    private class TargetState(val entry: ZipEntryInfo, outDir: File) {
+    private class TargetState(
+        val entry: ZipEntryInfo,
+        outDir: File,
+        /**
+         * Shared inflate output buffer, owned by the enclosing [extract] call.
+         *
+         * [advance] drives exactly one target at a time, so a per-target buffer would be
+         * allocated for every target and used for one at a time: `update_sd_base.zip` carries
+         * 83 images, which is 41.5 MB of buffers that are all live simultaneously on a phone
+         * for no benefit. A single 512 KB buffer is reused across the whole pass.
+         */
+        private val scratch: ByteArray,
+    ) {
         val hdrBuf = ByteArray(HDR_BUF)
         var hdrFill = 0
         var needed = LOCAL_HDR          // 30, then 30 + nameLen + extraLen
@@ -266,12 +280,6 @@ object NestedZipStream {
         val file: File = File(outDir, safeName(entry.name))
         var bytesWritten = 0L
         private var finalized = false
-
-        /**
-         * Reused inflate output buffer. Allocating this per [write] call would churn ~1.5 GB
-         * of short-lived garbage for a 3 GB entry on a phone, so it lives with the target.
-         */
-        private val scratch = ByteArray(OUT_CHUNK)
 
         fun openOutput() {
             file.parentFile?.mkdirs()
