@@ -36,6 +36,20 @@ interface PayloadSource : Closeable {
 
     /** Read exactly [len] bytes at [offset] into [buffer] at [bufOffset]. Blocks until full. */
     fun readFully(offset: Long, buffer: ByteArray, bufOffset: Int, len: Int)
+
+    /**
+     * Cheap identity used to decide whether a cached parse of this source is still valid.
+     *
+     * Must be fast — it is consulted on every open, and a full-content hash would defeat the
+     * purpose by reading the whole file. Name, length and last-modified time are what real
+     * caches use: they change whenever the file is replaced or edited, which is exactly the
+     * condition under which a cached directory would be wrong.
+     *
+     * Sources that cannot supply a modification time fall back to size plus a stable handle
+     * description, which is conservative: it may miss a same-size in-place edit, but the
+     * digest stored alongside the cache still rejects any window that does not match.
+     */
+    fun identity(): String = "${fileName()}:$size"
 }
 
 /**
@@ -46,6 +60,9 @@ class FileSource(private val file: File) : PayloadSource {
     private val channel: FileChannel = FileChannel.open(file.toPath(), StandardOpenOption.READ)
     override val size: Long = channel.size()
     override fun fileName(): String = file.name
+
+    /** Adds last-modified time to the default identity, so an in-place edit invalidates the cache. */
+    override fun identity(): String = "${file.name}:${file.length()}:${file.lastModified()}"
 
     override fun readFully(offset: Long, buffer: ByteArray, bufOffset: Int, len: Int) {
         val bb = ByteBuffer.wrap(buffer, bufOffset, len)
@@ -74,9 +91,31 @@ class UriSource private constructor(
     private val channel: FileChannel,
     override val size: Long,
     private val displayName: String,
+    private val uriKey: String,
 ) : PayloadSource {
 
     override fun fileName(): String = displayName
+
+    /**
+     * SAF documents need more than a name: the same `displayName` can refer to different files,
+     * and the same document ID can be rewritten in place. The document URI is stable per file and
+     * the provider's own LAST_MODIFIED is the equivalent of a filesystem mtime, so both go in.
+     *
+     * Lazy because it costs a content-resolver round trip, and identity is only consulted when a
+     * cache candidate exists — a source that is never cached never pays for it.
+     */
+    override fun identity(): String = "uri:$uriKey:$size:$lastModified"
+
+    /** Provider-reported mtime, or 0 when the provider does not expose one. */
+    private val lastModified: Long by lazy {
+        runCatching {
+            DumperApplication.appContext.contentResolver.query(
+                android.net.Uri.parse(uriKey),
+                arrayOf(android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED),
+                null, null, null,
+            )?.use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else 0L } ?: 0L
+        }.getOrDefault(0L)
+    }
 
     override fun readFully(offset: Long, buffer: ByteArray, bufOffset: Int, len: Int) {
         if (len == 0) return
@@ -137,7 +176,7 @@ class UriSource private constructor(
             val name = queryDisplayName(context, uri)
                 ?: uri.lastPathSegment?.substringAfterLast('/')?.ifBlank { null }
                 ?: "payload.bin"
-            return UriSource(stream, channel, size, name)
+            return UriSource(stream, channel, size, name, uri.toString())
         }
 
         private fun queryDisplayName(context: Context, uri: Uri): String? = runCatching {
@@ -161,6 +200,13 @@ class HttpSource private constructor(
 ) : PayloadSource {
 
     override fun fileName(): String = fileName
+
+    /**
+     * HTTP identity is the URL plus length. A URL normally serves immutable content, but if it is
+     * republished the size usually changes; the stored digest remains the backstop against a
+     * same-size change, since a mismatched window is rejected rather than parsed.
+     */
+    override fun identity(): String = "http:$url:$size"
 
     override fun readFully(offset: Long, buffer: ByteArray, bufOffset: Int, len: Int) {
         if (len == 0) return

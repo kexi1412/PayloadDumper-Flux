@@ -115,6 +115,36 @@ object NestedZipStream {
         val compressedSize = nestedEntry.compressedSize
         val deflated = nestedEntry.method == 8
 
+        // A cached tail skips the inflate entirely. This is the case that matters for a package
+        // the user opens more than once: the scan exists solely to recover the inner central
+        // directory, which is a pure function of the archive, so re-deriving it is pure waste.
+        // Any miss — absent, stale, corrupt, unreadable — falls through to a normal scan below.
+        NestedDirCache.load(outer, nestedEntry, dataOffset)?.let { cached ->
+            // Cross-check the cached stream length against the outer ZIP's own central
+            // directory. A disagreement means the cache describes a different archive than the
+            // one being opened, so it must not be trusted even though its digest is intact.
+            val sizeAgrees = nestedEntry.uncompressedSize <= 0 ||
+                cached.totalOut == nestedEntry.uncompressedSize
+            if (sizeAgrees) {
+                val restored = TailWindow.restored(cached.bytes, cached.totalOut)
+                val parsed = parseCentralDirectory(restored)
+                if (parsed.entries.isNotEmpty()) {
+                    onProgress?.invoke(1f)
+                    return ScanResult(
+                        ref = Ref(
+                            dataOffset,
+                            compressedSize,
+                            restored.totalOut,
+                            deflated,
+                            parsed.entries,
+                            nestedEntry.name,
+                        ),
+                        images = parsed.entries.filter { isFirmwareImage(it.name) },
+                    )
+                }
+            }
+        }
+
         // The parent's central directory already told us how many bytes this stream will
         // produce, so the window can jump straight to the tail instead of buffering and
         // shifting its way through all 9.4 GB. See TailWindow.
@@ -159,12 +189,37 @@ object NestedZipStream {
             )
         }
 
-        val entries = parseCentralDirectory(window)
-        if (entries.isEmpty()) throw IOException("Nested ZIP '${nestedEntry.name}' contains no entries")
+        val parsed = parseCentralDirectory(window)
+        if (parsed.entries.isEmpty()) {
+            throw IOException("Nested ZIP '${nestedEntry.name}' contains no entries")
+        }
+
+        // Store only from the first byte the decode actually depends on. The backward searches
+        // for ZIP64 EOCD / EOCD all land at or after the central directory, so the suffix is
+        // self-sufficient: re-decoding it yields the identical entry list. `totalOut` is stored
+        // unchanged, because windowStart of the suffix is (totalOut - suffixSize) and that is
+        // exactly the absolute offset the suffix begins at — so the restored window reports the
+        // same stream geometry as the original. That keeps the caller's offsets valid.
+        NestedDirCache.store(
+            source = outer,
+            entry = nestedEntry,
+            dataOffset = dataOffset,
+            bytes = window.buf,
+            off = parsed.firstNeeded,
+            len = window.length - parsed.firstNeeded,
+            totalOut = window.totalOut,
+        )
 
         return ScanResult(
-            ref = Ref(dataOffset, compressedSize, window.totalOut, deflated, entries, nestedEntry.name),
-            images = entries.filter { isFirmwareImage(it.name) },
+            ref = Ref(
+                dataOffset,
+                compressedSize,
+                window.totalOut,
+                deflated,
+                parsed.entries,
+                nestedEntry.name,
+            ),
+            images = parsed.entries.filter { isFirmwareImage(it.name) },
         )
     }
 
@@ -473,15 +528,21 @@ object NestedZipStream {
      * as before, so a wrong or absent size degrades to the previous (correct, slower) path
      * rather than breaking the scan.
      */
-    private class TailWindow(private val capacity: Int, expectedTotal: Long = 0L) {
-        val buf = ByteArray(capacity)
-        var length = 0
-            private set
-        var totalOut = 0L
-            private set
-
-        /** Stream offset where buffering must begin. 0 = buffer everything (unknown total). */
-        private val startAt = if (expectedTotal > capacity) expectedTotal - capacity else 0L
+    private class TailWindow private constructor(
+        val buf: ByteArray,
+        var length: Int,
+        var totalOut: Long,
+        private val capacity: Int,
+        private val startAt: Long,
+    ) {
+        /** Streaming window: buffers only the tail of a stream whose length is (maybe) known. */
+        constructor(capacity: Int, expectedTotal: Long = 0L) : this(
+            buf = ByteArray(capacity),
+            length = 0,
+            totalOut = 0L,
+            capacity = capacity,
+            startAt = if (expectedTotal > capacity) expectedTotal - capacity else 0L,
+        )
 
         fun append(src: ByteArray, off: Int, len: Int) {
             if (len <= 0) return
@@ -507,10 +568,39 @@ object NestedZipStream {
 
         /** Absolute stream offset of buf[0]. */
         fun windowStart(): Long = totalOut - length
+
+        companion object {
+            /**
+             * Rebuild a window from a cached tail.
+             *
+             * The window is exactly what [parseCentralDirectory] consumes — the bytes plus the
+             * absolute offset they start at — so replaying a cached window runs the same decoder
+             * as a fresh scan. That is deliberate: a cache that fed the parser a differently
+             * shaped input would be a second implementation to keep correct, and the point of
+             * caching 7 KB is to avoid work, not to fork the parser.
+             *
+             * The cached total is validated as `>= bytes.size` on load, so `startAt` is never
+             * negative and [windowStart] is consistent.
+             */
+            fun restored(cached: ByteArray, cachedTotalOut: Long): TailWindow {
+                val startAt = cachedTotalOut - cached.size
+                return TailWindow(cached.copyOf(), cached.size, cachedTotalOut, cached.size, startAt)
+            }
+        }
     }
 
+    /**
+     * Result of decoding a window.
+     *
+     * [firstNeeded] is the offset within the window of the earliest byte the decode depends on —
+     * the start of the central directory. Everything before it was searched but not read, which
+     * matters because it lets the cache store only the meaningful suffix rather than the whole
+     * 4 MB window. On the real Honor package that is 7,073 bytes instead of 4,194,304.
+     */
+    private class ParsedDirectory(val entries: List<ZipEntryInfo>, val firstNeeded: Int)
+
     /** Decode the central directory out of the tail window, expanding ZIP64 extra fields. */
-    private fun parseCentralDirectory(w: TailWindow): List<ZipEntryInfo> {
+    private fun parseCentralDirectory(w: TailWindow): ParsedDirectory {
         val buf = w.buf
         val len = w.length
         val winStart = w.windowStart()
@@ -589,7 +679,11 @@ object NestedZipStream {
             )
             p = nameStart + nameLen + extraLen + commentLen
         }
-        return entries
+        // cdRel precedes the ZIP64 EOCD, its locator, and the EOCD in a well-formed archive,
+        // so it is the earliest byte any of the backward searches can land on. Caching from
+        // here therefore preserves the decode exactly while discarding the megabytes of
+        // preceding stream that were only ever skipped over.
+        return ParsedDirectory(entries, cdRel)
     }
 
     /** Backwards search for a 4-byte signature that ends at or before index [fromExclusive]. */
