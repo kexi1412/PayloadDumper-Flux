@@ -128,7 +128,6 @@ fun InfoRow(
             .fillMaxWidth()
             .heightIn(min = 48.dp)
             .padding(start = 32.dp, end = 32.dp, top = 12.dp, bottom = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             label,

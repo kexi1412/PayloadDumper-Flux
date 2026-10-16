@@ -66,7 +66,7 @@ fun PartitionRow(info: PartitionInfo, onExtract: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 64.dp)
+            .heightIn(min = 56.dp)
             .padding(start = 32.dp, end = 32.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

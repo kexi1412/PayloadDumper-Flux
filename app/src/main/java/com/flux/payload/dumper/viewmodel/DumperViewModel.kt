@@ -11,12 +11,15 @@ import com.flux.payload.dumper.R
 import com.flux.payload.dumper.core.FileSource
 import com.flux.payload.dumper.core.HttpSource
 import com.flux.payload.dumper.core.Net
+import com.flux.payload.dumper.core.ParseResult
 import com.flux.payload.dumper.core.PayloadExtractor
 import com.flux.payload.dumper.core.PayloadParser
 import com.flux.payload.dumper.core.PayloadSource
 import com.flux.payload.dumper.core.ResumeState
+import com.flux.payload.dumper.core.UniversalParser
 import com.flux.payload.dumper.core.UriSource
 import com.flux.payload.dumper.core.toHex
+import com.flux.payload.dumper.core.ZipScanner
 import com.flux.payload.dumper.data.Preferences
 import com.flux.payload.dumper.model.ArchiveInfo
 import com.flux.payload.dumper.model.ExtractState
@@ -35,6 +38,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
+import java.io.RandomAccessFile
 
 sealed interface ParseState {
     data object Idle : ParseState
@@ -91,6 +95,9 @@ class DumperViewModel : ViewModel() {
     private fun str(@StringRes resId: Int, vararg args: Any): String =
         DumperApplication.appContext.getString(resId, *args)
 
+    private var parseResult: ParseResult? = null
+    private val rawEntries = mutableMapOf<String, ParseResult.RawEntry>()  // for non-CrAU formats
+
     fun parse() {
         val raw = _input.value.trim()
         if (raw.isEmpty()) { _snackbar.value = str(R.string.msg_input_required); return }
@@ -111,24 +118,44 @@ class DumperViewModel : ViewModel() {
                             FileSource(f)
                         }
                     }
-                    val parsed = PayloadParser.parse(src)
+                    val result = UniversalParser.parse(src)
                     source = src
-                    payload = parsed
-                    parsed
+                    parseResult = result
+                    result
                 }
-            }.onSuccess { parsed ->
-                sessionOutputDir = resolveOutputDir(parsed.fileName)
+            }.onSuccess { result ->
+                sessionOutputDir = resolveOutputDir(srcFileName(result))
                 resumeStates.clear()
-                _partitions.value = parsed.manifest.partitionsList.map { it.toInfo() }
-                _parseState.value = ParseState.Ready(
-                    ArchiveInfo(
-                        fileName = parsed.fileName,
-                        fileSize = parsed.archiveSize,
-                        securityPatchLevel = parsed.manifest.securityPatchLevel.ifEmpty { "—" },
-                        partitionCount = parsed.manifest.partitionsCount,
-                        blockSize = parsed.blockSize,
-                    )
-                )
+                rawEntries.clear()
+
+                when (result) {
+                    is ParseResult.CrAU -> {
+                        payload = result.payload
+                        _partitions.value = result.payload.manifest.partitionsList.map { it.toInfo() }
+                        _parseState.value = ParseState.Ready(
+                            ArchiveInfo(
+                                fileName = result.payload.fileName,
+                                fileSize = result.payload.archiveSize,
+                                securityPatchLevel = result.payload.manifest.securityPatchLevel.ifEmpty { "—" },
+                                partitionCount = result.payload.manifest.partitionsCount,
+                                blockSize = result.payload.blockSize,
+                            )
+                        )
+                    }
+                    is ParseResult.RawEntries -> {
+                        payload = null
+                        result.entries.forEach { e -> rawEntries[e.name] = e }
+                        _partitions.value = result.entries.map { e ->
+                            PartitionInfo(
+                                partitionName = e.name,
+                                size = e.size,
+                                compressedSize = e.compressedSize,
+                                sha256 = "",
+                            )
+                        }
+                        _parseState.value = ParseState.Ready(result.archiveInfo)
+                    }
+                }
             }.onFailure { e ->
                 _parseState.value = ParseState.Failed(e.message ?: str(R.string.parse_failed))
                 _snackbar.value = e.message ?: str(R.string.parse_failed)
@@ -137,7 +164,49 @@ class DumperViewModel : ViewModel() {
     }
 
     fun extract(partitionName: String) {
-        val pl = payload ?: return
+        // CrAU path (existing)
+        val pl = payload
+        if (pl != null) {
+            extractCrAU(partitionName, pl)
+            return
+        }
+
+        // Raw entry path (Honor/Huawei/ZIP)
+        val entry = rawEntries[partitionName] ?: return
+        val src = source ?: return
+        if (jobs[partitionName]?.isActive == true) return
+        val outDir = sessionOutputDir ?: resolveOutputDir(src.fileName()).also { sessionOutputDir = it }
+
+        val job = viewModelScope.launch {
+            update(partitionName) { it.copy(extractState = ExtractState.RUNNING, verifyState = VerifyState.NONE, message = "") }
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val outFile = File(outDir, File(entry.name).name)
+                    outFile.parentFile?.mkdirs()
+
+                    if (entry.method == 0) {
+                        // STORED — direct copy from source offset
+                        copyRawRange(src, entry.offset, entry.size, outFile) { p ->
+                            // progress callback
+                        }
+                    } else {
+                        // DEFLATED — need to decompress
+                        inflateRawRange(src, entry.offset, entry.compressedSize, outFile) { p ->
+                        }
+                    }
+                    outFile
+                }
+            }.onSuccess { outFile ->
+                update(partitionName) { it.copy(extractState = ExtractState.DONE, progress = 1f, verifyState = VerifyState.SKIPPED) }
+            }.onFailure { e ->
+                update(partitionName) { it.copy(extractState = ExtractState.ERROR, message = e.message ?: str(R.string.state_extract_failed)) }
+                _snackbar.value = "$partitionName: ${e.message}"
+            }
+        }
+        jobs[partitionName] = job
+    }
+
+    private fun extractCrAU(partitionName: String, pl: com.flux.payload.dumper.model.Payload) {
         val src = source ?: return
         if (jobs[partitionName]?.isActive == true) return
         val part = pl.manifest.partitionsList.firstOrNull { it.partitionName == partitionName } ?: return
@@ -263,6 +332,11 @@ class DumperViewModel : ViewModel() {
         )
     }
 
+    private fun srcFileName(result: ParseResult): String = when (result) {
+        is ParseResult.CrAU -> result.payload.fileName
+        is ParseResult.RawEntries -> result.archiveInfo.fileName
+    }
+
     private fun closeSource() {
         runCatching { source?.close() }
         source = null
@@ -271,5 +345,60 @@ class DumperViewModel : ViewModel() {
     override fun onCleared() {
         super.onCleared()
         closeSource()
+    }
+
+    /** Copy [size] bytes from [source] starting at [offset] to [outFile], with progress. */
+    private suspend fun copyRawRange(
+        source: PayloadSource,
+        offset: Long,
+        size: Long,
+        outFile: File,
+        onProgress: (Float) -> Unit,
+    ) = withContext(Dispatchers.IO) {
+        val raf = RandomAccessFile(outFile, "rw")
+        try {
+            raf.setLength(size)
+            val channel = raf.channel
+            val bufSize = 65536
+            val buffer = ByteArray(bufSize)
+            var pos = 0L
+            while (pos < size) {
+                val toRead = minOf(bufSize.toLong(), size - pos).toInt()
+                source.readFully(offset + pos, buffer, 0, toRead)
+                channel.write(java.nio.ByteBuffer.wrap(buffer, 0, toRead), pos)
+                pos += toRead
+                onProgress(pos.toFloat() / size)
+            }
+        } finally {
+            raf.close()
+        }
+    }
+
+    /** Inflate compressed data from [source] at [offset] to [outFile]. */
+    private suspend fun inflateRawRange(
+        source: PayloadSource,
+        offset: Long,
+        compressedSize: Long,
+        outFile: File,
+        onProgress: (Float) -> Unit,
+    ) = withContext(Dispatchers.IO) {
+        // Read entire compressed data (entries from OTA ZIPs are typically small enough)
+        val compressed = source.readFully(offset, compressedSize.toInt())
+        val inflater = java.util.zip.Inflater()
+        inflater.setInput(compressed)
+
+        val outFile_stream = java.io.FileOutputStream(outFile)
+        try {
+            val outBuf = ByteArray(65536)
+            while (!inflater.finished()) {
+                val n = inflater.inflate(outBuf)
+                if (n > 0) outFile_stream.write(outBuf, 0, n)
+                else break
+            }
+            onProgress(1f)
+        } finally {
+            outFile_stream.close()
+            inflater.end()
+        }
     }
 }
