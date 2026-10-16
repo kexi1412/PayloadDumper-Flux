@@ -256,6 +256,12 @@ object NestedZipStream {
         var bytesWritten = 0L
         private var finalized = false
 
+        /**
+         * Reused inflate output buffer. Allocating this per [write] call would churn ~1.5 GB
+         * of short-lived garbage for a 3 GB entry on a phone, so it lives with the target.
+         */
+        private val scratch = ByteArray(OUT_CHUNK)
+
         fun openOutput() {
             file.parentFile?.mkdirs()
             out = FileOutputStream(file)
@@ -270,14 +276,13 @@ object NestedZipStream {
                 val inf = inflater
                 val os = out
                 if (inf != null && os != null) {
-                    val tmp = ByteArray(OUT_CHUNK)
                     while (true) {
-                        val k = inf.inflate(tmp)
-                        if (k > 0) { os.write(tmp, 0, k); bytesWritten += k } else break
+                        val k = inf.inflate(scratch)
+                        if (k > 0) { os.write(scratch, 0, k); bytesWritten += k } else break
                     }
                 }
             } catch (_: Throwable) {
-                // fall through — report via return value
+                // fall through — reported through the return value
             } finally {
                 runCatching { out?.flush() }
                 runCatching { out?.close() }
@@ -295,10 +300,9 @@ object NestedZipStream {
             if (entry.method == 8) {
                 val inf = inflater!!
                 inf.setInput(buf, off, len)
-                val tmp = ByteArray(OUT_CHUNK)
                 while (true) {
-                    val k = inf.inflate(tmp)
-                    if (k > 0) { os.write(tmp, 0, k); bytesWritten += k } else break
+                    val k = inf.inflate(scratch)
+                    if (k > 0) { os.write(scratch, 0, k); bytesWritten += k } else break
                 }
             } else {
                 os.write(buf, off, len)
