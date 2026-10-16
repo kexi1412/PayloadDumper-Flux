@@ -90,12 +90,12 @@ object ZipScanner {
             val cenOffset = bb.int.toLong() and 0xFFFFFFFFL
 
             // ZIP64?
-            if (cenCountTotal == ZIP64_MAGIC || cenOffset == ZIP64_MAGIC || cenSizeHere == ZIP64_MAGIC) {
+            if (cenCountTotal == ZIP64_MAGIC.toInt() || cenOffset == ZIP64_MAGIC || cenSizeHere == ZIP64_MAGIC) {
                 return locateZip64CentralDirectory(source, tail, pos, bb.capacity())
             }
 
             val cdSize = if (cenSizeHere != ZIP64_MAGIC) cenSizeHere else 0L
-            val realCount = if (cenCountTotal != ZIP64_MAGIC) cenCountTotal else cenCountHere
+            val realCount = if (cenCountTotal != ZIP64_MAGIC.toInt()) cenCountTotal else cenCountHere
             val realOffset = if (cenOffset != ZIP64_MAGIC) cenOffset else 0L
             val realSize = if (cdSize > 0) cdSize else source.size - realOffset - (tailLen - pos - ENDHDR)
             return CDRegion(realOffset, realSize)
