@@ -9,14 +9,17 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FolderOpen
@@ -28,6 +31,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -45,7 +49,9 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
@@ -177,6 +183,12 @@ fun DumperScreen(vm: DumperViewModel) {
                 }
 
                 when (val st = parseState) {
+                    is ParseState.Parsing -> {
+                        // Walking a 9 GB nested Honor ZIP takes ~1 min; show live progress so
+                        // it does not look like an unresponsive app.
+                        item { Spacer(Modifier.height(12.dp)) }
+                        item { ParseProgressCard(st.detail) }
+                    }
                     is ParseState.Ready -> {
                         item { CategoryHeader(stringResource(R.string.cat_package)) }
                         item { OtaSummaryCard(st.archive) }
@@ -386,6 +398,43 @@ private fun ErrorCard(message: String) {
                 color = flux.labelSecondary,
                 modifier = Modifier.padding(top = 6.dp),
             )
+        }
+    }
+}
+
+/**
+ * COUI 17 风格的行内进度卡：一条细进度条 + 当前阶段文字。
+ * 用于解析超大嵌套包（荣耀 SD 卡升级包内层 9 GB）时的实时反馈。
+ */
+@Composable
+private fun ParseProgressCard(detail: String?) {
+    val flux = LocalFluxColors.current
+    CardGroup {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .padding(start = 32.dp, end = 32.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconBox(icon = Icons.Outlined.Refresh, cd = null, tint = flux.iconLocal, bgColor = flux.iconBoxBg)
+            Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) {
+                Text(
+                    detail ?: stringResource(R.string.state_parsing),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = flux.labelPrimary,
+                    maxLines = 2,
+                )
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp)
+                        .height(2.dp)
+                        .clip(RoundedCornerShape(1.dp)),
+                    color = flux.iconLocal,
+                    trackColor = flux.divider,
+                )
+            }
         }
     }
 }

@@ -10,6 +10,7 @@ import com.flux.payload.dumper.DumperApplication
 import com.flux.payload.dumper.R
 import com.flux.payload.dumper.core.FileSource
 import com.flux.payload.dumper.core.HttpSource
+import com.flux.payload.dumper.core.NestedZipStream
 import com.flux.payload.dumper.core.Net
 import com.flux.payload.dumper.core.ParseResult
 import com.flux.payload.dumper.core.PayloadExtractor
@@ -19,7 +20,6 @@ import com.flux.payload.dumper.core.ResumeState
 import com.flux.payload.dumper.core.UniversalParser
 import com.flux.payload.dumper.core.UriSource
 import com.flux.payload.dumper.core.toHex
-import com.flux.payload.dumper.core.ZipScanner
 import com.flux.payload.dumper.data.Preferences
 import com.flux.payload.dumper.model.ArchiveInfo
 import com.flux.payload.dumper.model.ExtractState
@@ -42,7 +42,13 @@ import java.io.RandomAccessFile
 
 sealed interface ParseState {
     data object Idle : ParseState
-    data object Parsing : ParseState
+
+    /**
+     * Parsing in progress. [detail] carries live progress for long streaming operations such
+     * as walking a 9 GB nested Honor ZIP, where a silent spinner would look like a hang.
+     */
+    data class Parsing(val detail: String? = null) : ParseState
+
     data class Ready(val archive: ArchiveInfo) : ParseState
     data class Failed(val message: String) : ParseState
 }
@@ -101,7 +107,7 @@ class DumperViewModel : ViewModel() {
     fun parse() {
         val raw = _input.value.trim()
         if (raw.isEmpty()) { _snackbar.value = str(R.string.msg_input_required); return }
-        _parseState.value = ParseState.Parsing
+        _parseState.value = ParseState.Parsing("Opening archive…")
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
@@ -118,7 +124,9 @@ class DumperViewModel : ViewModel() {
                             FileSource(f)
                         }
                     }
-                    val result = UniversalParser.parse(src)
+                    val result = UniversalParser.parse(src) { msg ->
+                        _parseState.value = ParseState.Parsing(msg)
+                    }
                     source = src
                     parseResult = result
                     result
@@ -174,8 +182,7 @@ class DumperViewModel : ViewModel() {
         // Raw entry path (Honor/Huawei/ZIP)
         val entry = rawEntries[partitionName] ?: return
         if (jobs[partitionName]?.isActive == true) return
-        // Use the nested temp file as source if entry came from a nested ZIP
-        val src: PayloadSource = if (entry.sourceFile != null) FileSource(entry.sourceFile!!) else (source ?: return)
+        val src = source ?: return
         val outDir = sessionOutputDir ?: resolveOutputDir(src.fileName()).also { sessionOutputDir = it }
 
         val job = viewModelScope.launch {
@@ -184,21 +191,47 @@ class DumperViewModel : ViewModel() {
                 withContext(Dispatchers.IO) {
                     val outFile = File(outDir, File(entry.name).name)
                     outFile.parentFile?.mkdirs()
-
-                    if (entry.method == 0) {
-                        // STORED — direct copy from source offset
-                        copyRawRange(src, entry.offset, entry.size, outFile) { p ->
-                            // progress callback
+                    when (val origin = entry.origin) {
+                        is ParseResult.Origin.OuterRange -> {
+                            if (origin.method == 0) {
+                                copyRawRange(src, origin.offset, origin.uncompressedSize, outFile) { p ->
+                                    update(partitionName) { it.copy(progress = p) }
+                                }
+                            } else {
+                                inflateRawRange(src, origin.offset, origin.compressedSize, outFile) { p ->
+                                    update(partitionName) { it.copy(progress = p) }
+                                }
+                            }
                         }
-                    } else {
-                        // DEFLATED — need to decompress
-                        inflateRawRange(src, entry.offset, entry.compressedSize, outFile) { p ->
+
+                        is ParseResult.Origin.NestedZip -> {
+                            // Stream the nested ZIP once and pull this one entry out of it.
+                            // No temp file: the inner deflate stream is inflated inline.
+                            val produced = NestedZipStream.extract(
+                                outer = src,
+                                ref = origin.ref,
+                                targets = listOf(origin.inner),
+                                outDir = outDir,
+                                onProgress = { done, total ->
+                                    update(partitionName) {
+                                        it.copy(progress = if (total > 0) done.toFloat() / total else 0f)
+                                    }
+                                },
+                            )
+                            val written = produced[origin.inner.name]
+                                ?: produced.values.firstOrNull()
+                                ?: throw IOException("Entry '${origin.inner.name}' not found in nested ZIP")
+                            if (written.absolutePath != outFile.absolutePath) {
+                                written.copyTo(outFile, overwrite = true)
+                                written.delete()
+                            }
                         }
                     }
                     outFile
                 }
             }.onSuccess { outFile ->
                 update(partitionName) { it.copy(extractState = ExtractState.DONE, progress = 1f, verifyState = VerifyState.SKIPPED) }
+                _snackbar.value = "${entry.name} → ${outFile.absolutePath}"
             }.onFailure { e ->
                 update(partitionName) { it.copy(extractState = ExtractState.ERROR, message = e.message ?: str(R.string.state_extract_failed)) }
                 _snackbar.value = "$partitionName: ${e.message}"
@@ -385,13 +418,14 @@ class DumperViewModel : ViewModel() {
         outFile: File,
         onProgress: (Float) -> Unit,
     ) = withContext(Dispatchers.IO) {
-        val inflater = java.util.zip.Inflater()
+        // ZIP entries hold RAW DEFLATE streams (no zlib header/checksum), so `nowrap` must be
+        // set — a default Inflater() would reject the very first block as a bad header.
+        val inflater = java.util.zip.Inflater(true)
         try {
             val inputBuf = ByteArray(256 * 1024)
             val outputBuf = ByteArray(512 * 1024)
             var srcPos = offset
             var consumed = 0L
-            var totalOut = 0L
 
             java.io.FileOutputStream(outFile).use { fos ->
                 while (consumed < compressedSize) {
@@ -401,17 +435,18 @@ class DumperViewModel : ViewModel() {
                     srcPos += toRead
                     consumed += toRead
 
-                    while (!inflater.needsInput() && !inflater.finished()) {
+                    while (true) {
                         val n = inflater.inflate(outputBuf)
                         if (n > 0) {
                             fos.write(outputBuf, 0, n)
-                            totalOut += n
                             if (compressedSize > 0) onProgress(consumed.toFloat() / compressedSize)
-                        } else break
+                            continue
+                        }
+                        break
                     }
                 }
-                // Flush remaining
-                while (!inflater.finished()) {
+                // Flush anything the inflater still holds.
+                while (true) {
                     val n = inflater.inflate(outputBuf)
                     if (n > 0) fos.write(outputBuf, 0, n) else break
                 }

@@ -42,6 +42,7 @@
     <string name="tile_verify_failed">%1$s · Verification failed</string>
     <string name="tile_extracted">%1$s · Extracted</string>
     <string name="tile_idle">%1$s · Compressed %2$s</string>
+    <string name="state_parsing">Parsing…</string>
     <string name="state_paused">Paused</string>
     <string name="state_extract_failed">Extraction failed</string>
 
