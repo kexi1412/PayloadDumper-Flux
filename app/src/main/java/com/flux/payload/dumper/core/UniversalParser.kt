@@ -44,6 +44,14 @@ sealed interface ParseResult {
  */
 object UniversalParser {
 
+    /** Temp files created for nested ZIP extraction — should be cleaned up after use. */
+    private val nestedTempFiles = mutableListOf<java.io.File>()
+
+    fun cleanupTempFiles() {
+        nestedTempFiles.forEach { runCatching { it.delete() } }
+        nestedTempFiles.clear()
+    }
+
     fun parse(source: PayloadSource): ParseResult {
         val format = FormatDetector.detect(source)
 
@@ -82,42 +90,91 @@ object UniversalParser {
                 // Scan ZIP entries — find firmware images
                 val entries = format.entries
 
-                // Look for UPDATE.APP inside the ZIP
+                // Look for nested firmware ZIPs (Honor SD update pattern):
+                //   update_sd_base.zip (9 GB, contains image/*.img)
+                //   update_sd_preload_*.zip (contains preinstalled apps)
+                val nestedZips = entries.filter { entry ->
+                    entry.name.endsWith(".zip", true) && (
+                        entry.name.contains("update_sd_base", true) ||
+                        entry.name.contains("update_sd", true) ||
+                        entry.name.contains("main_ota", true)
+                    )
+                }
+
+                // Also check for UPDATE.APP or direct .img entries
                 val updateAppEntry = entries.find {
                     it.name.contains("UPDATE.APP", true) || it.name.contains("update.app", true)
                 }
+                val directImgs = entries.filter { it.name.endsWith(".img", true) || it.name.endsWith(".bin", true) }
 
-                val rawEntries = if (updateAppEntry != null) {
-                    // Parse UPDATE.APP from within the ZIP
-                    val dataOffset = ZipScanner.dataOffsetForEntry(source, updateAppEntry)
-                    val updateEntries = UpdateAppParser.parse(source, dataOffset)
-                    updateEntries.mapIndexed { i, e ->
-                        val name = e.filename.ifBlank { "partition_$i" }
-                        ParseResult.RawEntry(
-                            name = name,
-                            displayName = "${updateAppEntry.name}::$name",
-                            offset = e.offset,
-                            size = e.size,
-                            compressedSize = e.size,
-                            method = 0,
-                        )
-                    }
-                } else {
-                    // No UPDATE.APP — filter for interesting entries
-                    val interesting = entries.filter { entry ->
-                        entry.name.endsWith(".img", true) ||
-                        entry.name.endsWith(".bin", true) ||
-                        entry.name.endsWith(".new.dat", true) ||
-                        entry.name.endsWith(".transfer.list", true) ||
-                        (entry.name.endsWith(".zip", true) && entry.name.contains("update_sd", true))
+                val rawEntries = when {
+                    // Direct .img entries in the outer ZIP (no nesting)
+                    directImgs.isNotEmpty() && nestedZips.isEmpty() -> {
+                        directImgs.map { entry ->
+                            ParseResult.RawEntry(
+                                name = entry.name.substringAfterLast('/'),
+                                displayName = entry.name,
+                                offset = ZipScanner.dataOffsetForEntry(source, entry),
+                                size = entry.uncompressedSize,
+                                compressedSize = entry.compressedSize,
+                                method = entry.method,
+                            )
+                        }
                     }
 
-                    if (interesting.isEmpty()) {
-                        // Fall back to all entries with reasonable size
-                        entries.filter { it.uncompressedSize > 1024 * 1024 } // > 1 MB
+                    // UPDATE.APP inside the ZIP
+                    updateAppEntry != null -> {
+                        val dataOffset = ZipScanner.dataOffsetForEntry(source, updateAppEntry)
+                        val updateEntries = UpdateAppParser.parse(source, dataOffset)
+                        updateEntries.mapIndexed { i, e ->
+                            val name = e.filename.ifBlank { "partition_$i" }
+                            ParseResult.RawEntry(
+                                name = name,
+                                displayName = "${updateAppEntry.name}::$name",
+                                offset = e.offset,
+                                size = e.size,
+                                compressedSize = e.size,
+                                method = 0,
+                            )
+                        }
+                    }
+
+                    // Nested ZIPs — need to extract inner ZIP to temp and scan
+                    nestedZips.isNotEmpty() -> {
+                        val result = mutableListOf<ParseResult.RawEntry>()
+                        for (nestedZip in nestedZips) {
+                            val tempDir = java.io.File(System.getProperty("java.io.tmpdir"), "flux_nested")
+                            tempDir.mkdirs()
+                            val (tempFile, innerEntries) = NestedZipReader.extractAndScan(source, nestedZip, tempDir)
+                            // Register temp file for cleanup
+                            nestedTempFiles.add(tempFile)
+                            // Add all image/* entries from inner ZIP
+                            innerEntries.filter {
+                                it.name.endsWith(".img", true) ||
+                                it.name.endsWith(".bin", true) ||
+                                it.name.endsWith(".elf", true) ||
+                                it.name.endsWith(".mbn", true)
+                            }.forEach { inner ->
+                                result.add(ParseResult.RawEntry(
+                                    name = inner.name.substringAfterLast('/'),
+                                    displayName = "${nestedZip.name.substringAfterLast('/')}::${inner.name}",
+                                    offset = ZipScanner.dataOffsetForEntry(FileSource(tempFile), inner),
+                                    size = inner.uncompressedSize,
+                                    compressedSize = inner.compressedSize,
+                                    method = inner.method,
+                                    nestedZip = true,
+                                ))
+                            }
+                        }
+                        result
+                    }
+
+                    // Fallback: show all large entries
+                    else -> {
+                        entries.filter { it.uncompressedSize > 1024 * 1024 }
                             .map { entry ->
                                 ParseResult.RawEntry(
-                                    name = entry.name,
+                                    name = entry.name.substringAfterLast('/'),
                                     displayName = entry.name,
                                     offset = ZipScanner.dataOffsetForEntry(source, entry),
                                     size = entry.uncompressedSize,
@@ -126,18 +183,6 @@ object UniversalParser {
                                     nestedZip = entry.name.endsWith(".zip", true),
                                 )
                             }
-                    } else {
-                        interesting.map { entry ->
-                            ParseResult.RawEntry(
-                                name = entry.name,
-                                displayName = entry.name,
-                                offset = ZipScanner.dataOffsetForEntry(source, entry),
-                                size = entry.uncompressedSize,
-                                compressedSize = entry.compressedSize,
-                                method = entry.method,
-                                nestedZip = entry.name.endsWith(".zip", true),
-                            )
-                        }
                     }
                 }
 
