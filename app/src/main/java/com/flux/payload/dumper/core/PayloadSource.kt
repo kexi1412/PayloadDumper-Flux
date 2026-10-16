@@ -3,6 +3,7 @@ package com.flux.payload.dumper.core
 import android.content.Context
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -91,7 +92,12 @@ class UriSource private constructor(
     private val channel: FileChannel,
     override val size: Long,
     private val displayName: String,
-    private val uriKey: String,
+    /**
+     * Precomputed identity string. Built in [open] because deriving it needs a `ContentResolver`,
+     * and [open] is the only place a `Context` is available — threading it through here avoids
+     * reaching for a global application singleton from inside a data source.
+     */
+    private val identityKey: String,
 ) : PayloadSource {
 
     override fun fileName(): String = displayName
@@ -100,22 +106,8 @@ class UriSource private constructor(
      * SAF documents need more than a name: the same `displayName` can refer to different files,
      * and the same document ID can be rewritten in place. The document URI is stable per file and
      * the provider's own LAST_MODIFIED is the equivalent of a filesystem mtime, so both go in.
-     *
-     * Lazy because it costs a content-resolver round trip, and identity is only consulted when a
-     * cache candidate exists — a source that is never cached never pays for it.
      */
-    override fun identity(): String = "uri:$uriKey:$size:$lastModified"
-
-    /** Provider-reported mtime, or 0 when the provider does not expose one. */
-    private val lastModified: Long by lazy {
-        runCatching {
-            DumperApplication.appContext.contentResolver.query(
-                android.net.Uri.parse(uriKey),
-                arrayOf(android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED),
-                null, null, null,
-            )?.use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else 0L } ?: 0L
-        }.getOrDefault(0L)
-    }
+    override fun identity(): String = identityKey
 
     override fun readFully(offset: Long, buffer: ByteArray, bufOffset: Int, len: Int) {
         if (len == 0) return
@@ -176,8 +168,24 @@ class UriSource private constructor(
             val name = queryDisplayName(context, uri)
                 ?: uri.lastPathSegment?.substringAfterLast('/')?.ifBlank { null }
                 ?: "payload.bin"
-            return UriSource(stream, channel, size, name, uri.toString())
+            // Document URI (stable per file) plus the provider's own mtime, so rewriting a
+            // document in place invalidates any cache keyed on it. 0 when the provider does not
+            // expose LAST_MODIFIED; the cached payload digest remains the backstop.
+            val modified = queryLastModified(context, uri)
+            val identity = "uri:$uri:$size:$modified"
+            return UriSource(stream, channel, size, name, identity)
         }
+
+        private fun queryLastModified(context: Context, uri: Uri): Long = runCatching {
+            context.contentResolver
+                .query(
+                    uri,
+                    arrayOf(DocumentsContract.Document.COLUMN_LAST_MODIFIED),
+                    null, null, null,
+                )
+                ?.use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else 0L }
+                ?: 0L
+        }.getOrDefault(0L)
 
         private fun queryDisplayName(context: Context, uri: Uri): String? = runCatching {
             context.contentResolver

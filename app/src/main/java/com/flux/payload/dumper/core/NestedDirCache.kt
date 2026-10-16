@@ -13,9 +13,10 @@ import java.security.MessageDigest
  * ## Why this exists
  *
  * Deriving the inner directory of `update_sd_base.zip` requires inflating the whole 9.46 GB
- * DEFLATE stream, because the directory sits at the very end of it (measured: 40.7s for one
- * pass on a desktop, and the stream is Huffman-coded from byte 1 so no part of it can be
- * skipped). The entire result of that work is **7,073 bytes** of central directory.
+ * DEFLATE stream, because the directory sits at the very end of it. Measured: 40.7s for one pass
+ * on a desktop, and no part of the stream can be skipped — it is Huffman-coded from the first
+ * byte, and the directory never appears verbatim in the compressed data. The entire result of
+ * that work is **7,073 bytes** of central directory.
  *
  * Those bytes are a pure function of the archive: the same file always yields the same
  * directory. So the honest fix for a slow *repeated* open is not a faster scan — it is not
@@ -23,16 +24,22 @@ import java.security.MessageDigest
  * source, and every later open is a file read.
  *
  * Measured on the real Honor package: 40,652 ms to rescan vs **23 ms** to load the cache,
- * for a 6.9 KB sidecar. A ~1,777x improvement on reopen, versus 0 GB of extra disk.
+ * for an 8.7 KB sidecar. A ~1,777x improvement on reopen, versus 8.81 GB of extra disk for the
+ * alternative of materialising the inflated archive — which carries no information the cache
+ * lacks, since it is the same bytes.
  *
  * ## What is stored
  *
- * The tail window's bytes, not just the directory, because the directory cannot be located
- * without the EOCD and ZIP64 EOCD that precede it and whose position depends on the window
- * origin. Storing `(windowBytes, totalOut)` reconstructs the exact state [NestedZipStream]
- * parses from, so the cached path and the scanned path run identical code. The window is
- * capped at 4 MB, so this is at most 4 MB per nested archive — three archives, 12 MB worst
- * case, against 11.5 GB of inflate work.
+ * The window *suffix* starting at the central directory, not the whole 4 MB window. The backward
+ * searches for the EOCD and the ZIP64 EOCD locator always land at or after the directory, so the
+ * suffix is self-sufficient: re-decoding it yields an identical entry list while discarding the
+ * megabytes of stream that were only ever skipped over. Measured 4,194,304 bytes → 8,866 bytes,
+ * a 473x reduction.
+ *
+ * `totalOut` is stored unchanged rather than being reduced to the suffix length. That is what
+ * keeps the geometry consistent: the restored window's `windowStart()` is `totalOut - suffixSize`,
+ * which is exactly the absolute offset the suffix begins at, so every entry's `localHeaderOffset`
+ * still refers to the same stream position as it did during the scan.
  *
  * ## Safety
  *
