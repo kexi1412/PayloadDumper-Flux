@@ -417,7 +417,7 @@ private fun ParseProgressCard(detail: String?) {
                 .padding(start = 32.dp, end = 32.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconBox(icon = Icons.Outlined.Refresh, cd = null, tint = flux.iconLocal, bgColor = flux.iconBoxBg)
+            IconBox(icon = Icons.Outlined.Refresh, contentDescription = null, tint = flux.iconLocal, bgColor = flux.iconBoxBg)
             Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) {
                 Text(
                     detail ?: stringResource(R.string.state_parsing),
