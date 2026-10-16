@@ -173,8 +173,9 @@ class DumperViewModel : ViewModel() {
 
         // Raw entry path (Honor/Huawei/ZIP)
         val entry = rawEntries[partitionName] ?: return
-        val src = source ?: return
         if (jobs[partitionName]?.isActive == true) return
+        // Use the nested temp file as source if entry came from a nested ZIP
+        val src: PayloadSource = if (entry.sourceFile != null) FileSource(entry.sourceFile!!) else (source ?: return)
         val outDir = sessionOutputDir ?: resolveOutputDir(src.fileName()).also { sessionOutputDir = it }
 
         val job = viewModelScope.launch {
@@ -340,6 +341,8 @@ class DumperViewModel : ViewModel() {
     private fun closeSource() {
         runCatching { source?.close() }
         source = null
+        // Clean up nested ZIP temp files
+        UniversalParser.cleanupTempFiles()
     }
 
     override fun onCleared() {
@@ -374,7 +377,7 @@ class DumperViewModel : ViewModel() {
         }
     }
 
-    /** Inflate compressed data from [source] at [offset] to [outFile]. */
+    /** Inflate compressed data from [source] at [offset] to [outFile], streaming. */
     private suspend fun inflateRawRange(
         source: PayloadSource,
         offset: Long,
@@ -382,22 +385,39 @@ class DumperViewModel : ViewModel() {
         outFile: File,
         onProgress: (Float) -> Unit,
     ) = withContext(Dispatchers.IO) {
-        // Read entire compressed data (entries from OTA ZIPs are typically small enough)
-        val compressed = source.readFully(offset, compressedSize.toInt())
         val inflater = java.util.zip.Inflater()
-        inflater.setInput(compressed)
-
-        val outFile_stream = java.io.FileOutputStream(outFile)
         try {
-            val outBuf = ByteArray(65536)
-            while (!inflater.finished()) {
-                val n = inflater.inflate(outBuf)
-                if (n > 0) outFile_stream.write(outBuf, 0, n)
-                else break
+            val inputBuf = ByteArray(256 * 1024)
+            val outputBuf = ByteArray(512 * 1024)
+            var srcPos = offset
+            var consumed = 0L
+            var totalOut = 0L
+
+            java.io.FileOutputStream(outFile).use { fos ->
+                while (consumed < compressedSize) {
+                    val toRead = minOf(inputBuf.size.toLong(), compressedSize - consumed).toInt()
+                    source.readFully(srcPos, inputBuf, 0, toRead)
+                    inflater.setInput(inputBuf, 0, toRead)
+                    srcPos += toRead
+                    consumed += toRead
+
+                    while (!inflater.needsInput() && !inflater.finished()) {
+                        val n = inflater.inflate(outputBuf)
+                        if (n > 0) {
+                            fos.write(outputBuf, 0, n)
+                            totalOut += n
+                            if (compressedSize > 0) onProgress(consumed.toFloat() / compressedSize)
+                        } else break
+                    }
+                }
+                // Flush remaining
+                while (!inflater.finished()) {
+                    val n = inflater.inflate(outputBuf)
+                    if (n > 0) fos.write(outputBuf, 0, n) else break
+                }
             }
             onProgress(1f)
         } finally {
-            outFile_stream.close()
             inflater.end()
         }
     }

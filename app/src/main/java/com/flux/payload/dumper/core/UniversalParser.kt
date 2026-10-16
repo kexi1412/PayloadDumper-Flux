@@ -33,6 +33,8 @@ sealed interface ParseResult {
         val compressedSize: Long,
         val method: Int,     // 0=STORED, 8=DEFLATED
         val nestedZip: Boolean = false,  // entry is itself a ZIP containing more partitions
+        /** If non-null, data must be read from this file (not the original source). Used for nested ZIP extraction. */
+        val sourceFile: java.io.File? = null,
     )
 }
 
@@ -146,24 +148,29 @@ object UniversalParser {
                             val tempDir = java.io.File(System.getProperty("java.io.tmpdir"), "flux_nested")
                             tempDir.mkdirs()
                             val (tempFile, innerEntries) = NestedZipReader.extractAndScan(source, nestedZip, tempDir)
-                            // Register temp file for cleanup
                             nestedTempFiles.add(tempFile)
-                            // Add all image/* entries from inner ZIP
-                            innerEntries.filter {
-                                it.name.endsWith(".img", true) ||
-                                it.name.endsWith(".bin", true) ||
-                                it.name.endsWith(".elf", true) ||
-                                it.name.endsWith(".mbn", true)
-                            }.forEach { inner ->
-                                result.add(ParseResult.RawEntry(
-                                    name = inner.name.substringAfterLast('/'),
-                                    displayName = "${nestedZip.name.substringAfterLast('/')}::${inner.name}",
-                                    offset = ZipScanner.dataOffsetForEntry(FileSource(tempFile), inner),
-                                    size = inner.uncompressedSize,
-                                    compressedSize = inner.compressedSize,
-                                    method = inner.method,
-                                    nestedZip = true,
-                                ))
+                            // Compute data offsets for all inner entries using ONE FileSource
+                            val innerSource = FileSource(tempFile)
+                            try {
+                                innerEntries.filter {
+                                    it.name.endsWith(".img", true) ||
+                                    it.name.endsWith(".bin", true) ||
+                                    it.name.endsWith(".elf", true) ||
+                                    it.name.endsWith(".mbn", true)
+                                }.forEach { inner ->
+                                    result.add(ParseResult.RawEntry(
+                                        name = inner.name.substringAfterLast('/'),
+                                        displayName = "${nestedZip.name.substringAfterLast('/')}::${inner.name}",
+                                        offset = ZipScanner.dataOffsetForEntry(innerSource, inner),
+                                        size = inner.uncompressedSize,
+                                        compressedSize = inner.compressedSize,
+                                        method = inner.method,
+                                        nestedZip = true,
+                                        sourceFile = tempFile,
+                                    ))
+                                }
+                            } finally {
+                                innerSource.close()
                             }
                         }
                         result
