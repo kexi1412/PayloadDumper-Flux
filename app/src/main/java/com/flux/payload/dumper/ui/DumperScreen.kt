@@ -184,10 +184,28 @@ fun DumperScreen(vm: DumperViewModel) {
 
                 when (val st = parseState) {
                     is ParseState.Parsing -> {
-                        // Walking a 9 GB nested Honor ZIP takes ~1 min; show live progress so
-                        // it does not look like an unresponsive app.
+                        // Walking a 9 GB nested Honor ZIP takes tens of seconds; show live progress
+                        // so it does not look like an unresponsive app.
                         item { Spacer(Modifier.height(12.dp)) }
                         item { ParseProgressCard(st.detail) }
+
+                        // Rows published by archives that have already been scanned. A Honor
+                        // package is scanned archive by archive, so the first results are usable
+                        // long before the last one lands — showing them here means the user can
+                        // start extracting while the remainder is still being read, instead of
+                        // watching a progress bar with nothing under it.
+                        if (partitions.isNotEmpty()) {
+                            item { CategoryHeader(stringResource(R.string.images_header, partitions.size)) }
+                            item { Spacer(Modifier.height(8.dp)) }
+                            item {
+                                CardGroup {
+                                    partitions.forEachIndexed { i, p ->
+                                        PartitionRow(info = p, onExtract = { requireStorage { vm.extract(p.partitionName) } })
+                                        if (i < partitions.lastIndex) RowDivider(startInset = 72.dp)
+                                    }
+                                }
+                            }
+                        }
                     }
                     is ParseState.Ready -> {
                         item { CategoryHeader(stringResource(R.string.cat_package)) }

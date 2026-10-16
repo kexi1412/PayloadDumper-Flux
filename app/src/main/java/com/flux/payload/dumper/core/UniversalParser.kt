@@ -86,14 +86,23 @@ object UniversalParser {
      * Parse [source].
      *
      * @param onProgress human-readable progress for long streaming operations
+     * @param onPartial receives an intermediate, complete-so-far entry list whenever a nested
+     *   archive finishes being scanned. Scanning a Honor package means inflating 11.5 GB across
+     *   three archives, so the caller can show results for the first one long before the last
+     *   one lands instead of staring at a progress line. Always fires at least once, and the
+     *   final invocation matches the returned [ParseResult.RawEntries] exactly.
      */
-    fun parse(source: PayloadSource, onProgress: ((String) -> Unit)? = null): ParseResult {
+    fun parse(
+        source: PayloadSource,
+        onProgress: ((String) -> Unit)? = null,
+        onPartial: ((List<ParseResult.RawEntry>) -> Unit)? = null,
+    ): ParseResult {
         return when (val format = FormatDetector.detect(source)) {
             is ArchiveFormat.CrAUPayload -> ParseResult.CrAU(PayloadParser.parse(source))
 
             is ArchiveFormat.UpdateApp -> parseRawUpdateApp(source)
 
-            is ArchiveFormat.HonorSdUpdate -> parseHonor(source, format.entries, onProgress)
+            is ArchiveFormat.HonorSdUpdate -> parseHonor(source, format.entries, onProgress, onPartial)
 
             is ArchiveFormat.BlockOta -> parseBlockOta(source)
 
@@ -134,6 +143,7 @@ object UniversalParser {
         source: PayloadSource,
         outerEntries: List<ZipEntryInfo>,
         onProgress: ((String) -> Unit)?,
+        onPartial: ((List<ParseResult.RawEntry>) -> Unit)?,
     ): ParseResult.RawEntries {
         val nestedZips = outerEntries.filter { entry ->
             entry.name.endsWith(".zip", ignoreCase = true) &&
@@ -144,6 +154,11 @@ object UniversalParser {
         }
         val directImages = outerEntries.filter { isImage(it.name) }
 
+        // Set when the nested branch runs, because that branch publishes from inside
+        // parseNestedZips as each archive finishes. Keyed off the branch actually taken rather
+        // than off `nestedZips.isEmpty()`: a package carrying both UPDATE.APP and nested ZIPs
+        // takes the UPDATE.APP branch, and a nestedZips-based guard would then publish nothing.
+        var published = false
         val raw = when {
             // Plain .img/.bin sitting directly in the outer ZIP.
             directImages.isNotEmpty() && nestedZips.isEmpty() -> {
@@ -166,13 +181,20 @@ object UniversalParser {
             }
 
             // Nested firmware ZIP — stream its central directory, never materialise it.
-            nestedZips.isNotEmpty() -> parseNestedZips(source, nestedZips, onProgress)
+            nestedZips.isNotEmpty() -> {
+                published = true
+                parseNestedZips(source, nestedZips, onProgress, onPartial)
+            }
 
             // Last resort: surface every sizeable entry.
             else -> outerEntries
                 .filter { it.uncompressedSize > 1024 * 1024 }
                 .map { asOuterRange(source, it) }
         }
+
+        // Every non-nested branch resolves in one shot, so publish here to keep the contract
+        // that onPartial fires at least once and its final call matches the returned result.
+        if (!published) onPartial?.invoke(raw)
 
         return ParseResult.RawEntries(
             archiveInfo = ArchiveInfo(
@@ -209,6 +231,7 @@ object UniversalParser {
         source: PayloadSource,
         nestedZips: List<ZipEntryInfo>,
         onProgress: ((String) -> Unit)?,
+        onPartial: ((List<ParseResult.RawEntry>) -> Unit)?,
     ): List<ParseResult.RawEntry> {
         val out = mutableListOf<ParseResult.RawEntry>()
 
@@ -227,6 +250,7 @@ object UniversalParser {
                 // not be streamed so the failure is visible rather than silently swallowed.
                 onProgress?.invoke("$label — listed as a file (${Diagnostics.describe(e).lineSequence().first()})")
                 out.add(asOuterRange(source, nested))
+                onPartial?.invoke(out.toList())
                 continue
             }
 
@@ -237,6 +261,7 @@ object UniversalParser {
             if (usable.isEmpty()) {
                 onProgress?.invoke("$label — no images inside, listed as a file")
                 out.add(asOuterRange(source, nested))
+                onPartial?.invoke(out.toList())
                 continue
             }
 
@@ -251,6 +276,14 @@ object UniversalParser {
                     )
                 )
             }
+
+            // Publish this archive's rows immediately. The three nested archives are scanned
+            // one after another and each costs real time (the largest alone is ~11s of inflate),
+            // so withholding every row until the last one lands leaves the user watching a
+            // progress line with nothing to show for it. Emitting per archive turns one long
+            // wait into three short ones and lets extraction start on the first results while
+            // the rest are still being read.
+            onPartial?.invoke(out.toList())
         }
 
         return out

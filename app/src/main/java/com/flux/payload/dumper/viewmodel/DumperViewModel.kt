@@ -40,6 +40,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
+import java.util.concurrent.ConcurrentHashMap
 
 sealed interface ParseState {
     data object Idle : ParseState
@@ -114,7 +115,39 @@ class DumperViewModel : ViewModel() {
         DumperApplication.appContext.getString(resId, *args)
 
     private var parseResult: ParseResult? = null
-    private val rawEntries = mutableMapOf<String, ParseResult.RawEntry>()  // for non-CrAU formats
+
+    /**
+     * Entries for non-CrAU formats, keyed by [displayKey].
+     *
+     * Concurrent because the parser now publishes results from its own IO thread while the
+     * scanner is still running, and the user can tap a row on the main thread in between.
+     * A plain HashMap read during that write could observe a half-resized table.
+     */
+    private val rawEntries = ConcurrentHashMap<String, ParseResult.RawEntry>()
+
+    /**
+     * Publish entries discovered so far, from the parser's background thread.
+     *
+     * Called once per nested archive as each finishes scanning, plus once more with the final
+     * list. Both [rawEntries] and [_partitions] are safe to touch from a non-main thread:
+     * the former is concurrent, the latter is a StateFlow whose `value` is volatile, and
+     * Compose collects it on the main thread.
+     *
+     * Rows already published are never removed — the parser only ever appends.
+     */
+    private fun publishRawEntries(entries: List<ParseResult.RawEntry>) {
+        entries.forEach { e -> rawEntries[displayKey(e)] = e }
+        _partitions.value = entries.map { e ->
+            PartitionInfo(
+                partitionName = displayKey(e),
+                size = e.size,
+                compressedSize = e.compressedSize,
+                sha256 = "",
+                title = e.name,
+                subtitle = e.displayName,
+            )
+        }
+    }
 
     /** Names already produced by a batched nested-ZIP pass, so extractAll() skips them. */
     private val _extractedInBatch = mutableSetOf<String>()
@@ -123,6 +156,14 @@ class DumperViewModel : ViewModel() {
         val raw = _input.value.trim()
         if (raw.isEmpty()) { _snackbar.value = str(R.string.msg_input_required); return }
         _parseState.value = ParseState.Parsing("Opening archive…")
+        // Drop the previous archive's rows up front. This used to happen in onSuccess, but rows
+        // are now published incrementally as each nested archive is scanned, so clearing there
+        // would discard entries the user is already extracting. Resetting here instead means the
+        // list starts empty for the new file and can only ever grow.
+        rawEntries.clear()
+        _partitions.value = emptyList()
+        payload = null
+        parseResult = null
         // Held outside the runCatching so the failure path can still probe the archive that was
         // actually opened. Assigning only on success (as before) meant a parse failure had
         // nothing to report on — exactly the case the report exists for.
@@ -147,9 +188,17 @@ class DumperViewModel : ViewModel() {
                     _parseState.value = ParseState.Parsing(
                         "Measuring ${src.fileName()} — ${src.size / (1 shl 20)} MB…"
                     )
-                    val result = UniversalParser.parse(src) { msg ->
-                        _parseState.value = ParseState.Parsing(msg)
-                    }
+                    val result = UniversalParser.parse(
+                        source = src,
+                        onProgress = { msg -> _parseState.value = ParseState.Parsing(msg) },
+                        // Publish rows the moment an archive has been scanned. The Honor package
+                        // is three nested archives and scanning them is inherently sequential
+                        // (each is a multi-GB DEFLATE stream), so waiting for the last one before
+                        // showing anything means tens of seconds of an apparently empty screen.
+                        // Emitting per archive lets the user read and even extract the first
+                        // archive's images while the rest is still being inflated.
+                        onPartial = { partial -> publishRawEntries(partial) },
+                    )
                     source = src
                     parseResult = result
                     result
@@ -157,7 +206,11 @@ class DumperViewModel : ViewModel() {
             }.onSuccess { result ->
                 sessionOutputDir = resolveOutputDir(srcFileName(result))
                 resumeStates.clear()
-                rawEntries.clear()
+                // NB: `rawEntries` is deliberately NOT cleared here. Rows were already published
+                // by publishRawEntries as each nested archive finished, and the user may have
+                // started extracting one of them — clearing now would drop the entry the running
+                // job looks up by name. The map is repopulated in full just below for the
+                // non-partial paths, and it is emptied at the start of the next parse instead.
                 _extractedInBatch.clear()
 
                 when (result) {
@@ -183,17 +236,10 @@ class DumperViewModel : ViewModel() {
                         // `version.img` is 258,160 vs 28,784. Keying on the bare basename
                         // made one silently overwrite the other, so the row the user tapped
                         // could extract a different file than the one it listed.
-                        result.entries.forEach { e -> rawEntries[displayKey(e)] = e }
-                        _partitions.value = result.entries.map { e ->
-                            PartitionInfo(
-                                partitionName = displayKey(e),
-                                size = e.size,
-                                compressedSize = e.compressedSize,
-                                sha256 = "",
-                                title = e.name,
-                                subtitle = e.displayName,
-                            )
-                        }
+                        //
+                        // This is the same call the incremental path makes, so the final state
+                        // is identical whether the rows arrived per archive or all at once.
+                        publishRawEntries(result.entries)
                         _parseState.value = ParseState.Ready(result.archiveInfo)
                     }
                 }
