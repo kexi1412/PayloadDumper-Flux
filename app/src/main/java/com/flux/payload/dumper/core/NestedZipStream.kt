@@ -115,7 +115,10 @@ object NestedZipStream {
         val compressedSize = nestedEntry.compressedSize
         val deflated = nestedEntry.method == 8
 
-        val window = TailWindow(TAIL_WINDOW)
+        // The parent's central directory already told us how many bytes this stream will
+        // produce, so the window can jump straight to the tail instead of buffering and
+        // shifting its way through all 9.4 GB. See TailWindow.
+        val window = TailWindow(TAIL_WINDOW, nestedEntry.uncompressedSize)
         val inBuf = ByteArray(IO_CHUNK)
         val outBuf = ByteArray(OUT_CHUNK)
 
@@ -447,29 +450,59 @@ object NestedZipStream {
         return r
     }
 
-    /** Fixed-size sliding window holding the last [capacity] bytes of a stream. */
-    private class TailWindow(private val capacity: Int) {
+    /**
+     * Fixed-size sliding window holding the last [capacity] bytes of a stream.
+     *
+     * ## Why [expectedTotal] matters
+     *
+     * A naive sliding window copies **every** byte of the stream into the window and then
+     * memmoves the window down each time it overflows. For `update_sd_base.zip` that is
+     * 9.4 GB of writes plus 61.7 GB of memmove — 18,048 shifts of 3.5 MB each — to end up
+     * keeping the final 673 bytes. Almost all of that traffic is pointless, because the
+     * caller already knows how many bytes the stream will produce (`uncompressedSize` is in
+     * the outer ZIP's central directory), so the position of the tail is known before a
+     * single byte is inflated.
+     *
+     * Given [expectedTotal], the window therefore stops counting and starts buffering only
+     * once the stream reaches `expectedTotal - capacity`. Because exactly `capacity` bytes
+     * remain at that point, the buffer fills to exactly full and never overflows, so the
+     * memmove path is never taken: the scan costs no memory traffic at all beyond the
+     * window's own [capacity].
+     *
+     * When [expectedTotal] is 0 or unknown the window starts at offset 0 and behaves exactly
+     * as before, so a wrong or absent size degrades to the previous (correct, slower) path
+     * rather than breaking the scan.
+     */
+    private class TailWindow(private val capacity: Int, expectedTotal: Long = 0L) {
         val buf = ByteArray(capacity)
         var length = 0
             private set
         var totalOut = 0L
             private set
 
+        /** Stream offset where buffering must begin. 0 = buffer everything (unknown total). */
+        private val startAt = if (expectedTotal > capacity) expectedTotal - capacity else 0L
+
         fun append(src: ByteArray, off: Int, len: Int) {
             if (len <= 0) return
+            val prev = totalOut
             totalOut += len
-            if (len >= capacity) {
-                System.arraycopy(src, off + len - capacity, buf, 0, capacity)
-                length = capacity
-                return
-            }
-            val overflow = length + len - capacity
+
+            // Wholly before the window: the bytes flow past and are never needed again.
+            if (totalOut <= startAt) return
+
+            // First chunk that straddles startAt contributes only its tail.
+            val from = if (prev >= startAt) 0 else (startAt - prev).toInt()
+            val n = len - from
+            if (n <= 0) return
+
+            val overflow = length + n - capacity
             if (overflow > 0) {
                 System.arraycopy(buf, overflow, buf, 0, length - overflow)
                 length -= overflow
             }
-            System.arraycopy(src, off, buf, length, len)
-            length += len
+            System.arraycopy(src, off + from, buf, length, n)
+            length += n
         }
 
         /** Absolute stream offset of buf[0]. */
