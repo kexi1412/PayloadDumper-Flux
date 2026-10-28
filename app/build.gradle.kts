@@ -49,6 +49,14 @@ android {
     androidResources {
         generateLocaleConfig = true
     }
+    testOptions {
+        unitTests.all {
+            testLogging {
+                showStandardStreams = true
+                events("passed", "failed", "skipped")
+            }
+        }
+    }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

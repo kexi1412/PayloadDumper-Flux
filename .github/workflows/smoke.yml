@@ -1,0 +1,54 @@
+name: Real OTA smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: OTA direct link to parse with the application core
+        required: true
+        default: https://gauss-componentotacostmanual-cn.allawnfs.com/remove-e6e9aeebe94ab0221233604074f25b67/component-ota/25/09/19/d92cb1e567994a4eb1700351ee09d71d.zip
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Parse the real OTA with HttpSource + UniversalParser
+        env:
+          FLUX_REAL_OTA_URL: ${{ inputs.url }}
+        run: |
+          chmod +x ./gradlew
+          ./gradlew testDebugUnitTest --tests '*RealOtaSmokeTest*' --no-daemon --stacktrace
+
+      - name: Show parsed firmware metadata
+        if: always()
+        run: |
+          cat app/build/real-ota-result.txt || true
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-ota-smoke-reports
+          path: |
+            app/build/real-ota-result.txt
+            app/build/reports/tests/
+            app/build/test-results/
+          if-no-files-found: warn
