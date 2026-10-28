@@ -291,11 +291,17 @@ class HttpSource private constructor(
             expected: Long,
         ): DecodedBody {
             val raw = body.byteStream()
-            val encoding = encodingHeader?.trim()?.lowercase(java.util.Locale.ROOT).orEmpty()
-            if (encoding.isEmpty() || encoding == "identity") return DecodedBody(raw, false)
+            val tokens = encodingHeader.orEmpty()
+                .split(',')
+                .map { it.substringBefore(';').trim().lowercase(java.util.Locale.ROOT) }
+                .filter { it.isNotEmpty() }
+            if (tokens.isEmpty() || tokens.all { it == "identity" }) return DecodedBody(raw, false)
             val buffered = java.io.BufferedInputStream(raw, 16 * 1024)
-            return when (encoding) {
-                "gzip", "x-gzip" -> when {
+            // Real compression is only gzip or deflate. Anything else (for example a server
+            // that wrongly sends "utf-8" in Content-Encoding) is a mislabel: ranges are
+            // advertised as identity, so the body is treated as raw bytes and length-checked.
+            return when {
+                tokens.any { it == "gzip" || it == "x-gzip" } -> when {
                     peek16(buffered) == 0x1f8b -> DecodedBody(java.util.zip.GZIPInputStream(buffered), true)
                     // Mislabeled identity body: accept only when its length proves it is raw.
                     body.contentLength() == expected -> DecodedBody(buffered, false)
@@ -303,10 +309,8 @@ class HttpSource private constructor(
                         "Server declared gzip for this HTTP range but sent a non-gzip body"
                     )
                 }
-                "deflate" -> DecodedBody(java.util.zip.InflaterInputStream(buffered), true)
-                else -> throw java.net.ProtocolException(
-                    "Server compressed this HTTP range as $encoding; only identity, gzip or deflate ranges can be read"
-                )
+                tokens.any { it == "deflate" } -> DecodedBody(java.util.zip.InflaterInputStream(buffered), true)
+                else -> DecodedBody(buffered, false)
             }
         }
 

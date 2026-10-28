@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.2 — 2026-10-29
+
+### Fixed / 修复
+- `Content-Encoding` is now parsed as an encoding list, and only real `gzip`/`x-gzip`/`deflate` members trigger decompression. A server that mislabels the header as `utf-8` (or any other non-compression token) no longer fails the parse; its bytes are treated as raw and length-checked.
+- Regression tests cover a charset mislabel and a list that still contains gzip.
+
 ## 3.0.1 — 2026-10-29
 
 ### Fixed / 修复

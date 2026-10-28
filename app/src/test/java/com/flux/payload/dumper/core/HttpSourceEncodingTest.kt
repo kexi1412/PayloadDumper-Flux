@@ -78,10 +78,17 @@ class HttpSourceEncodingTest {
         }
     }
 
-    @Test fun unsupportedEncodingIsRejectedWithAProtocolError() {
+    @Test fun charsetMislabeledAsContentEncodingIsTreatedAsIdentity() {
         MockWebServer().use { server ->
-            server.dispatcher = RangeDispatcher(payload, "br")
-            assertThrows(ProtocolException::class.java) { readThrough(server, 0, 3) }
+            server.dispatcher = RangeDispatcher(payload, "utf-8")
+            assertArrayEquals(payload.copyOfRange(3, 8), readThrough(server, 3, 5))
+        }
+    }
+
+    @Test fun encodingListStillDecodesItsGzipMember() {
+        MockWebServer().use { server ->
+            server.dispatcher = RangeDispatcher(payload, "utf-8, gzip", ::gzip)
+            assertArrayEquals(payload.copyOfRange(1, 6), readThrough(server, 1, 5))
         }
     }
 }

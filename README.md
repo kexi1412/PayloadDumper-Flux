@@ -20,7 +20,7 @@ Extract partition images on Android — from a **picked local file** or an HTTP 
 - **Independent sources:** the local document and network URL are remembered separately. Changing modes cannot accidentally parse the other source; an active task locks source changes.
 - **Firmware information:** Android version, security patch, kernel version, build fingerprint, file name, total file size, partition count and block size. Tap an information card to view/copy its full value.
 - **Resource-based COUI17 design:** light/dark blue palette, independent rounded cards, assignment-style information rows, 32→24sp collapsing title, segmented selector, accessible actions and scrollable About/settings dialogs.
-- **Correctness fixes:** exact HTTP Range validation; RFC 5987/URL filename decoding; lazy partition rows; atomic progress updates; nested-archive output isolation; bounded metadata parsing; source/relink cancellation guards; manifest-bound resume journals; per-range gzip/deflate inflation for CDNs that ignore `Accept-Encoding: identity`.
+- **Correctness fixes:** exact HTTP Range validation; RFC 5987/URL filename decoding; lazy partition rows; atomic progress updates; nested-archive output isolation; bounded metadata parsing; source/relink cancellation guards; manifest-bound resume journals; per-range gzip/deflate inflation for CDNs that ignore `Accept-Encoding: identity`, with mislabeled charset headers treated as raw bytes.
 - **Version consistency:** `versionName=3.0.0`, `versionCode=30`; About and the default User-Agent follow the build version.
 
 See [CHANGELOG](<CHANGELOG.md>) and the [COUI17 reference notes](<docs/COUI17_REFERENCE.md>).
