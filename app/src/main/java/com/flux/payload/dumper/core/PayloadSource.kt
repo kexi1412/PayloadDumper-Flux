@@ -245,7 +245,7 @@ class HttpSource private constructor(
                     if (decoded.encoded) {
                         // A CDN may gzip each range independently. The decoded length must be
                         // exactly the requested range, otherwise the bytes cannot be positioned.
-                        read = readExact(decoded.stream, buffer, bufOffset + (pos - offset), chunk, pos)
+                        read = readExact(decoded.stream, buffer, bufOffset + (pos - offset).toInt(), chunk, pos)
                         if (decoded.stream.read() != -1) {
                             throw java.net.ProtocolException(
                                 "Compressed HTTP range decoded beyond the requested $chunk bytes at $pos"
@@ -255,7 +255,7 @@ class HttpSource private constructor(
                         if (body.contentLength() >= 0 && body.contentLength() != chunk.toLong()) {
                             throw IOException("HTTP range body length mismatch")
                         }
-                        read = readExact(decoded.stream, buffer, bufOffset + (pos - offset), chunk, pos)
+                        read = readExact(decoded.stream, buffer, bufOffset + (pos - offset).toInt(), chunk, pos)
                     }
                 }
                 pos += read
