@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.1 — 2026-10-29
+
+### Fixed / 修复
+- Network links whose CDN ignores `Accept-Encoding: identity` and gzip/deflate-compresses each `Range` response no longer fail at parse with “Encoded HTTP range body…”. Each range is inflated independently and must decode to exactly the requested byte count; over- or under-run is rejected instead of mixing bytes.
+- Requests now send `Cache-Control: no-transform` to discourage intermediary re-compression.
+- Mislabeled `Content-Encoding: gzip` responses whose body is actually identity are accepted only when the body length proves it.
+- Unsupported encodings (for example `br`) now report a precise protocol error naming the encoding.
+
 ## 3.0.0 — 2026-10-29
 
 ### Added / 新增

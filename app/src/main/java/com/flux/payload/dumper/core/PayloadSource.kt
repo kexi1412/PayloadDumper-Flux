@@ -223,6 +223,7 @@ class HttpSource private constructor(
         val req = Request.Builder().url(url)
             .header("Range", "bytes=$offset-$end")
             .header("Accept-Encoding", "identity")
+            .header("Cache-Control", "no-transform")
             .build()
         var attempt = 0
         while (true) {
@@ -230,15 +231,21 @@ class HttpSource private constructor(
                 client.newCall(req).execute().use { resp ->
                     validateRange(resp, offset, end, size)
                     val body = resp.body ?: throw IOException("Empty body")
-                    if (body.contentLength() >= 0 && body.contentLength() != len.toLong()) {
-                        throw IOException("HTTP range body length mismatch")
-                    }
-                    val stream = body.byteStream()
-                    var read = 0
-                    while (read < len) {
-                        val n = stream.read(buffer, bufOffset + read, len - read)
-                        if (n <= 0) throw EOFException("Short read: got $read of $len at $offset")
-                        read += n
+                    val decoded = decodeRangeBody(body, resp.header("Content-Encoding"), len.toLong())
+                    if (decoded.encoded) {
+                        // A CDN may gzip each range independently. The decoded length must be
+                        // exactly the requested range, otherwise the bytes cannot be positioned.
+                        readExact(decoded.stream, buffer, bufOffset, len, offset)
+                        if (decoded.stream.read() != -1) {
+                            throw java.net.ProtocolException(
+                                "Compressed HTTP range decoded beyond the requested $len bytes at $offset"
+                            )
+                        }
+                    } else {
+                        if (body.contentLength() >= 0 && body.contentLength() != len.toLong()) {
+                            throw IOException("HTTP range body length mismatch")
+                        }
+                        readExact(decoded.stream, buffer, bufOffset, len, offset)
                     }
                 }
                 return
@@ -261,11 +268,69 @@ class HttpSource private constructor(
             val req = Request.Builder().url(url)
                 .header("Range", "bytes=0-0")
                 .header("Accept-Encoding", "identity")
+                .header("Cache-Control", "no-transform")
                 .build()
             client.newCall(req).execute().use { resp ->
                 val range = validateRange(resp, 0, 0, null)
                 val name = HttpArchiveHeaders.fileName(resp.header("Content-Disposition"), resp.request.url.toString())
                 return HttpSource(resp.request.url.toString(), client, range.total, name)
+            }
+        }
+
+        private class DecodedBody(val stream: java.io.InputStream, val encoded: Boolean)
+
+        /**
+         * Some CDNs ignore `Accept-Encoding: identity` and compress the selected range on the
+         * fly. That is still usable: each range is an independent gzip/deflate member, so it
+         * inflates back to exactly the requested bytes. Static compression of the whole entity
+         * is not usable, and the exact-length checks reject it instead of mixing bytes.
+         */
+        private fun decodeRangeBody(
+            body: okhttp3.ResponseBody,
+            encodingHeader: String?,
+            expected: Long,
+        ): DecodedBody {
+            val raw = body.byteStream()
+            val encoding = encodingHeader?.trim()?.lowercase(java.util.Locale.ROOT).orEmpty()
+            if (encoding.isEmpty() || encoding == "identity") return DecodedBody(raw, false)
+            val buffered = java.io.BufferedInputStream(raw, 16 * 1024)
+            return when (encoding) {
+                "gzip", "x-gzip" -> when {
+                    peek16(buffered) == 0x1f8b -> DecodedBody(java.util.zip.GZIPInputStream(buffered), true)
+                    // Mislabeled identity body: accept only when its length proves it is raw.
+                    body.contentLength() == expected -> DecodedBody(buffered, false)
+                    else -> throw java.net.ProtocolException(
+                        "Server declared gzip for this HTTP range but sent a non-gzip body"
+                    )
+                }
+                "deflate" -> DecodedBody(java.util.zip.InflaterInputStream(buffered), true)
+                else -> throw java.net.ProtocolException(
+                    "Server compressed this HTTP range as $encoding; only identity, gzip or deflate ranges can be read"
+                )
+            }
+        }
+
+        private fun peek16(input: java.io.BufferedInputStream): Int {
+            input.mark(2)
+            val first = input.read()
+            val second = input.read()
+            input.reset()
+            if (first < 0 || second < 0) return -1
+            return (first shl 8) or second
+        }
+
+        private fun readExact(
+            stream: java.io.InputStream,
+            buffer: ByteArray,
+            bufOffset: Int,
+            len: Int,
+            offset: Long,
+        ) {
+            var read = 0
+            while (read < len) {
+                val n = stream.read(buffer, bufOffset + read, len - read)
+                if (n <= 0) throw EOFException("Short read: got $read of $len at $offset")
+                read += n
             }
         }
 
@@ -278,9 +343,6 @@ class HttpSource private constructor(
                 ?: throw java.net.ProtocolException("Invalid or missing HTTP Content-Range")
             if (range.first != first || range.last != last || (total != null && range.total != total)) {
                 throw java.net.ProtocolException("HTTP Content-Range does not match the requested archive bytes")
-            }
-            if (resp.header("Content-Encoding")?.let { !it.equals("identity", true) } == true) {
-                throw java.net.ProtocolException("Encoded HTTP range body is not random-access archive data")
             }
             return range
         }

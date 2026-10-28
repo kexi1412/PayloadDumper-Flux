@@ -16,8 +16,8 @@ android {
         minSdk = 30
         targetSdk = 35
         // COUI17 + firmware information release.
-        versionCode = 30
-        versionName = "3.0.0"
+        versionCode = 31
+        versionName = "3.0.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
     }
