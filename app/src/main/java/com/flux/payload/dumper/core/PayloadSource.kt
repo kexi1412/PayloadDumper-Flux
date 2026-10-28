@@ -229,7 +229,7 @@ class HttpSource private constructor(
         // backoff and a smaller window. The caller still receives exactly [len] bytes or an
         // exception; a truncated body is never reported as success.
         while (left > 0) {
-            val chunk = minOf(left, chunkLimit)
+            val chunk = minOf(left, chunkLimit).toInt()
             val end = pos + chunk - 1
             val req = Request.Builder().url(url)
                 .header("Range", "bytes=$pos-$end")
