@@ -19,7 +19,7 @@
 - **来源独立记忆**：本地文档与网络 URL 分开保存，切换模式不串用；任务进行时锁定来源。
 - **固件信息**：Android 版本、安全补丁、内核版本、构建指纹、文件名、整包大小、分区数及块大小。点击信息卡查看、选择并复制完整内容。
 - **COUI17 资源化重构**：亮暗主题、原生蓝色、独立圆角卡片、右侧 assignment 信息、32→24sp 折叠标题、分段选择器、可滚动关于/设置对话框与可访问操作区。
-- **修复**：HTTP Range 忽略/错位响应、编码文件名、长指纹挤占标题、超长分区列表、并发进度丢更新、嵌套同名镜像覆盖、换链取消竞态和同名固件误用续传记录；服务器无视 `Accept-Encoding: identity` 对每段 Range 单独 gzip/deflate 压缩时，也会按段解压并严格核对字节数；把 `Content-Encoding` 误写成 `utf-8` 等非压缩值时按原始字节处理。
+- **修复**：HTTP Range 忽略/错位响应、编码文件名、长指纹挤占标题、超长分区列表、并发进度丢更新、嵌套同名镜像覆盖、换链取消竞态和同名固件误用续传记录；服务器无视 `Accept-Encoding: identity` 对每段 Range 单独 gzip/deflate 压缩时，也会按段解压并严格核对字节数；把 `Content-Encoding` 误写成 `utf-8` 等非压缩值时按原始字节处理；ZIP64 OTA 的 payload 定位不再错读 locator，超过 4 GiB 的目录和带注释的包也能直接进入 `payload.bin`。
 - **统一版本**：`versionName=3.0.0`、`versionCode=30`，关于页与默认 User-Agent 跟随版本号。
 
 完整记录见 [CHANGELOG](<CHANGELOG.md>)；设计证据见 [COUI17 资源参考](<docs/COUI17_REFERENCE.md>)。

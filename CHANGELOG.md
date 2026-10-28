@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.3 — 2026-10-29
+
+### Fixed / 修复
+- ZIP64 OTA payload location no longer reads the ZIP64 locator four bytes early. The locator sits exactly 20 bytes before the classic EOCD, and the old manual parser made every package larger than 4 GiB fail with “Central directory not found” before `payload.bin` was opened.
+- `ZipLocator` now delegates to the ZIP64-aware central-directory scanner, so ZIP64 extended local-header offsets, a non-empty archive comment and a central directory beyond 4 GiB are handled by one implementation.
+- Added an offline fixture made from the real 8.2 GB `PJZ110_15.0.0.861(CN01)` package: it asserts payload offset `2861`, 54 partitions, block size 4096, Android 15, patch `2025-09-01` and the OnePlus fingerprint through the production parser.
+
 ## 3.0.2 — 2026-10-29
 
 ### Fixed / 修复
