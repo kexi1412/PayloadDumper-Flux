@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.4 — 2026-10-29
+
+### Fixed / 修复
+- Kernel metadata now has enough vertical room to show the complete `uname -r` value. The parser already returned `6.6.66-android15-8-g29d86c5fc9dd-abogki428889875-4k`; the two-line info row ellipsized it, which looked like a wrong parse. The row now uses three lines and still opens the full copy dialog.
+- The source-mode segmented control's selected indicator now uses the same 4 dp inset as its track. Previously the track extended four dp past the indicator on the outer edge, leaving a thin unpainted strip beside “本地文件 / 网络链接”.
+- The real-package regression now includes every boot operation blob and asserts the exact kernel release, not just the manifest fields.
+
 ## 3.0.3 — 2026-10-29
 
 ### Fixed / 修复

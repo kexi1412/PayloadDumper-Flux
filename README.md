@@ -35,7 +35,7 @@ Information describes **the selected firmware**, not the phone running this app.
 | Android version | Target `post-build` fingerprint / protobuf postcondition, target `build.prop`, or a known target SDK mapping; optional boot header fallback |
 | Security patch | Target OTA metadata, target `build.prop`, payload manifest, or boot header **month precision** fallback |
 | Build fingerprint | Target OTA metadata or target `build.prop`; never the pre-update build or a partition hash |
-| Kernel version | `Linux version` banner in the target `boot.img` kernel region, including supported gzip/LZ4 kernel encodings |
+| Kernel version | `Linux version` banner in the target `boot.img` kernel region, including supported gzip/LZ4 kernel encodings; the full release is shown in-row and can be opened/copied |
 
 The reader supports `META-INF/com/android/metadata.pb` and text `metadata` in STORED or DEFLATE ZIP entries, with range, exact length and CRC checks. It reads explicitly named `build.prop` ZIP entries; it does **not** download/mount an entire system/vendor image to discover properties.
 

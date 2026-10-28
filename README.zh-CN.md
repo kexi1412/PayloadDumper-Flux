@@ -34,7 +34,7 @@
 | Android 版本 | OTA 目标指纹、protobuf postcondition、目标 build.prop、已知目标 SDK 映射；可选 boot header 兜底 |
 | 安全补丁 | 目标 OTA 元数据 → 目标 build.prop → payload manifest → boot header 月份精度 |
 | 构建指纹 | OTA 目标 metadata 或目标 build.prop；不使用 pre-build 或分区哈希 |
-| 内核版本 | 目标 boot.img 的 kernel 区段中 `Linux version` 字符串，支持相应 gzip/LZ4 编码 |
+| 内核版本 | 目标 boot.img 的 kernel 区段中 `Linux version` 字符串，支持相应 gzip/LZ4 编码；行内显示完整 release，点开可查看并复制全文 |
 
 支持 ZIP 内 `META-INF/com/android/metadata.pb` 和文本 metadata 的 STORED/DEFLATE 条目，校验边界、长度及 CRC。只读取明确路径的 build.prop 小条目，不下载或挂载完整 system/vendor 镜像寻找属性。
 
