@@ -7,6 +7,10 @@ on:
         description: OTA direct link to parse with the application core
         required: true
         default: https://gauss-componentotacostmanual-cn.allawnfs.com/remove-e6e9aeebe94ab0221233604074f25b67/component-ota/25/09/19/d92cb1e567994a4eb1700351ee09d71d.zip
+      filter:
+        description: Gradle test filter
+        required: false
+        default: '*RealOtaSmokeTest*'
 
 permissions:
   contents: read
@@ -35,7 +39,7 @@ jobs:
           FLUX_REAL_OTA_URL: ${{ inputs.url }}
         run: |
           chmod +x ./gradlew
-          ./gradlew testDebugUnitTest --tests '*RealOtaSmokeTest*' --no-daemon --stacktrace
+          ./gradlew testDebugUnitTest --tests "${{ inputs.filter }}" --no-daemon --stacktrace
 
       - name: Show parsed firmware metadata
         if: always()
