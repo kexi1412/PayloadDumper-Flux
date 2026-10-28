@@ -51,7 +51,7 @@ android {
     }
     testOptions {
         unitTests.all {
-            testLogging {
+            it.testLogging {
                 showStandardStreams = true
                 events("passed", "failed", "skipped")
             }
