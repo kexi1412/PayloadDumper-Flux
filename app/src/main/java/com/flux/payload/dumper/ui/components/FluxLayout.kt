@@ -1,8 +1,8 @@
 package com.flux.payload.dumper.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -15,11 +15,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -33,20 +35,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.flux.payload.dumper.ui.theme.FluxRadius
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
 
-/**
- * ColorOS 17 卡片列表背景。
- *
- * 底色精确值：coui_color_background_with_card = #F0F1F2（浅色）/ #000000（暗色）。
- */
+/** Explicit light/dark with-card background token; no wallpaper or OEM asset. */
 @Composable
 fun FluxBackground(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
     Box(
@@ -55,12 +57,7 @@ fun FluxBackground(modifier: Modifier = Modifier, content: @Composable BoxScope.
     )
 }
 
-/**
- * COUI 17 分组圆角卡片。
- *
- * 圆角：settingslib_preference_corner_radius = 20dp。
- * 暗色模式加 0.5dp 极淡轮廓（coui_color_label_quaternary）。
- */
+/** COUI card token, without an unverified all-around hairline or tonal elevation. */
 @Composable
 fun CardGroup(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     val flux = LocalFluxColors.current
@@ -68,86 +65,85 @@ fun CardGroup(modifier: Modifier = Modifier, content: @Composable ColumnScope.()
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(FluxRadius.Card))
-            .background(flux.card)
-            .border(0.5.dp, flux.cardOutline, RoundedCornerShape(FluxRadius.Card)),
+            .background(flux.card),
         content = content,
     )
 }
 
-/**
- * 行间分割线——COUI 17 使用极淡的内嵌发丝线。
- * 起始缩进 72dp（与 COUI 17 preference 的 paddingStart 32dp + icon 区域对齐）。
- */
+/** Optional grouped-list separator. Independent cards should not call this. */
 @Composable
-fun RowDivider(startInset: Dp = 72.dp, endInset: Dp = 0.dp) {
-    val flux = LocalFluxColors.current
+fun RowDivider(startInset: Dp = 32.dp, endInset: Dp = 32.dp) {
     HorizontalDivider(
         modifier = Modifier.padding(start = startInset, end = endInset),
-        thickness = 0.5.dp,
-        color = flux.divider,
+        thickness = Dp.Hairline,
+        color = LocalFluxColors.current.divider,
     )
 }
 
-/**
- * COUI 17 分类标题——coui_preference_classification_title_layout。
- * 字号 12sp，字重 sans-serif-medium，左边距 16dp（category_marginStart）。
- */
 @Composable
 fun CategoryHeader(text: String, modifier: Modifier = Modifier) {
-    val flux = LocalFluxColors.current
     Text(
         text = text,
-        style = MaterialTheme.typography.labelSmall.copy(
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-        ),
-        color = flux.labelSecondary,
-        modifier = modifier.padding(start = 16.dp, end = 8.dp, top = 20.dp, bottom = 8.dp),
+        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+        color = LocalFluxColors.current.labelSecondary,
+        modifier = modifier
+            .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp)
+            .semantics { heading() },
     )
 }
 
 /**
- * COUI 17 assignment 行——coui_preference_assignment_in_right 布局的 Compose 等价。
- *
- * 精确参数（从 AXML 提取）：
- *   paddingStart = 32dp, paddingEnd = 32dp
- *   minHeight = 48dp
- *   标题左、值右对齐同行
- *
- * 值文字颜色使用 coui_preference_secondary_text_color。
+ * Assignment on the trailing side, with bounded measurement for long hashes.
+ * 16dp internal padding plus the screen's 16dp card margin is a Flux adaptation
+ * of the sample's 32dp ungrouped preference padding. Heights remain content-led.
  */
 @Composable
 fun InfoRow(
     label: String,
     value: String,
     valueColor: Color = LocalFluxColors.current.labelSecondary,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    onClickLabel: String? = null,
 ) {
     val flux = LocalFluxColors.current
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
+            .then(
+                if (onClick != null) Modifier.clickable(
+                    role = Role.Button,
+                    onClickLabel = onClickLabel,
+                    onClick = onClick,
+                ) else Modifier,
+            )
             .heightIn(min = 48.dp)
-            .padding(start = 32.dp, end = 32.dp, top = 12.dp, bottom = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            label,
+            text = label,
             style = MaterialTheme.typography.titleMedium,
             color = flux.labelPrimary,
             modifier = Modifier.weight(1f),
         )
         Spacer(Modifier.width(16.dp))
         Text(
-            value,
-            style = MaterialTheme.typography.labelMedium,
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
             color = valueColor,
             textAlign = TextAlign.End,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1.3f),
         )
     }
 }
 
 /**
- * COUI 17 分段控件（COUITabView）。
- * 灰色轨道 + 白色滑块。
+ * Resource-backed track/indicator colors and 4dp inset. The native SegmentButton
+ * style is 40dp tall; a separate 48dp interaction band protects touch targets.
+ * Both grow with multiline/scaled labels instead of clipping them.
  */
 @Composable
 fun SegmentedToggle(
@@ -155,42 +151,68 @@ fun SegmentedToggle(
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     val flux = LocalFluxColors.current
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(flux.fieldBg)
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        options.forEachIndexed { i, label ->
-            val selected = i == selectedIndex
-            val bg by animateColorAsState(if (selected) flux.card else Color.Transparent, label = "segbg")
-            val fg by animateColorAsState(if (selected) flux.accent else flux.labelSecondary, label = "segfg")
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(9.dp))
-                    .background(bg)
-                    .clickable { onSelect(i) }
-                    .padding(vertical = 10.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(label, style = MaterialTheme.typography.labelMedium, color = fg)
+    if (options.isEmpty()) return
+    Box(modifier = modifier.fillMaxWidth().selectableGroup()) {
+        Box(
+            Modifier.matchParentSize()
+                .padding(vertical = 4.dp)
+                .clip(RoundedCornerShape(FluxRadius.Pill))
+                .background(flux.segmentTrack),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(0.dp),
+        ) {
+            options.forEachIndexed { index, label ->
+                val selected = index == selectedIndex
+                val background by animateColorAsState(
+                    if (selected) flux.segmentIndicator else Color.Transparent,
+                    label = "segmentIndicator",
+                )
+                val foreground by animateColorAsState(
+                    when {
+                        !enabled -> flux.labelTertiary
+                        selected -> flux.labelPrimary
+                        else -> flux.labelSecondary
+                    },
+                    label = "segmentLabel",
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .clip(RoundedCornerShape(FluxRadius.Pill))
+                        .selectable(
+                            selected = selected,
+                            enabled = enabled,
+                            role = Role.Tab,
+                            onClick = { onSelect(index) },
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        Modifier.matchParentSize()
+                            .padding(vertical = 4.dp)
+                            .clip(RoundedCornerShape(FluxRadius.Pill))
+                            .background(background),
+                    )
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = foreground,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                    )
+                }
             }
         }
     }
 }
 
-/**
- * COUI 17 圆角方块图标容器——COUIRoundImageView 风格。
- *
- * COUI 17 给每个 preference 图标包了一层着色圆角方块。
- * couiType=1 表示圆角方形。
- * 尺寸 40dp × 40dp（视觉适配），圆角 coui_textinput_corner_radius = 10dp。
- */
+/** Flux-owned icon presentation; sizes are adaptations, not extracted OEM artwork. */
 @Composable
 fun IconBox(
     icon: ImageVector,
@@ -208,36 +230,40 @@ fun IconBox(
             .background(bgColor),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            icon,
-            contentDescription = contentDescription,
-            tint = tint,
-            modifier = Modifier.size(iconSize),
-        )
+        Icon(icon, contentDescription, tint = tint, modifier = Modifier.size(iconSize))
     }
 }
 
-/**
- * COUI 17 实心强调悬浮按钮。
- */
+/** Resource palette plus a Flux press animation; not an extracted OEM spring. */
 @Composable
 fun ExtractFab(text: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val flux = LocalFluxColors.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by androidx.compose.animation.core.animateFloatAsState(if (pressed) 0.96f else 1f, label = "fab")
+    val scale by animateFloatAsState(if (pressed) 0.98f else 1f, label = "fabPress")
+    val background by animateColorAsState(
+        if (pressed) flux.pressMask.compositeOver(flux.accent) else flux.accent,
+        label = "fabColor",
+    )
     Row(
         modifier = modifier
+            .widthIn(max = 392.dp)
             .scale(scale)
-            .height(54.dp)
+            .heightIn(min = 56.dp)
             .clip(RoundedCornerShape(FluxRadius.Button))
-            .background(flux.accent)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 24.dp),
+            .background(background)
+            .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick)
+            .padding(horizontal = 24.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, contentDescription = null, tint = flux.onAccent, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(10.dp))
-        Text(text, style = MaterialTheme.typography.labelLarge, color = flux.onAccent, textAlign = TextAlign.Center)
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelLarge,
+            color = flux.onAccent,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.weight(1f, fill = false),
+        )
     }
 }

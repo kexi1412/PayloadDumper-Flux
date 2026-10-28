@@ -14,7 +14,7 @@
     <string name="source_local">本地文件</string>
     <string name="source_network">网络链接</string>
     <string name="action_browse">浏览</string>
-    <string name="input_hint_local">payload.bin / OTA 包路径</string>
+    <string name="input_hint_local">通过系统文件选择器选择 OTA 包</string>
     <string name="input_hint_network">粘贴 OTA 直链 URL</string>
     <string name="action_parse">解析</string>
     <string name="action_parsing">解析中…</string>
@@ -60,15 +60,15 @@
 
     <!-- About dialog -->
     <string name="about_version_author">版本 %1$s · 作者 %2$s</string>
-    <string name="about_description">从 Android A/B (payload.bin) 全量 OTA 中并行提取分区镜像。\n支持本地文件与 OTA 直链，多分区并发提取，网络断点续传，提取后 SHA-256 校验。\n界面遵循 ColorOS 17 卡片列表设计。</string>
+    <string name="about_description">支持从全量 A/B OTA、固件 ZIP 与荣耀/华为升级包提取镜像；支持本地文档、HTTP Range 直链、并行提取、断点续传与 SHA-256 校验。</string>
     <string name="about_link_title">项目主页</string>
     <string name="credits_title">致谢</string>
-    <string name="credits_body">· xyiguanle — payload 分析源码\n· rcmiku/Payload-Dumper-Compose — 前身项目\n· payload-dumper-c — 引擎参考</string>
+    <string name="credits_body">· YuKongA（yukong）/ Updater-KMP — OTA 元数据与内核信息读取参考\n· xyiguanle — payload 分析源码\n· rcmiku/Payload-Dumper-Compose — 前身项目\n· payload-dumper-c — 引擎参考</string>
     <string name="action_ok">好的</string>
 
     <!-- Relink dialog -->
     <string name="relink_title">链接已失效</string>
-    <string name="relink_body">分区「%1$s」下载中断，进度已保留。请粘贴一个新的 OTA 直链继续续传。\n提交后会先用 SHA-256 校验它是否为同一个 ROM，一致才会接着下，避免不同链接混包。</string>
+    <string name="relink_body">分区「%1$s」下载中断，进度已保留。请粘贴一个新的 OTA 直链继续续传。\n提交后会核对完整清单与操作布局，完全一致才复用已保存进度。</string>
     <string name="relink_input_label">新的 OTA 直链 URL</string>
     <string name="relink_confirm">校验并续传</string>
     <string name="action_cancel">取消</string>
@@ -79,17 +79,40 @@
     <string name="permission_confirm">去授权</string>
 
     <!-- Messages (snackbar / status) -->
-    <string name="msg_input_required">请输入本地路径或链接</string>
+    <string name="msg_input_required">请选择本地文件或填写网络链接</string>
     <string name="err_file_unreadable">文件不存在或不可读：%1$s</string>
     <string name="msg_extract_verify_failed">%1$s 提取完成，但校验未通过</string>
     <string name="msg_link_stalled">链接失效或网络中断，请提交新链接续传</string>
     <string name="msg_invalid_http">请填写有效的 http(s) 链接</string>
     <string name="err_partition_missing">新链接中不存在分区 %1$s</string>
-    <string name="err_different_rom">新链接不是同一个 ROM（分区 %1$s 的 SHA-256 不一致），已阻止以防混包</string>
+    <string name="err_different_rom">新链接的完整清单或操作布局不同（%1$s），不能复用旧进度</string>
     <string name="msg_resume_same_rom">已校验为同一 ROM，继续续传 %1$s</string>
     <string name="msg_relink_failed">换链接失败</string>
     <string name="msg_cancelled_progress_kept">已取消（未完成，进度已保留，可重新提取续传）</string>
     <string name="msg_all_done">全部提取完成</string>
     <string name="msg_nested_extracted">已从嵌套包提取 %1$d 个镜像</string>
     <string name="msg_nested_partial">已提取 %1$d 个镜像，%2$d 个失败</string>
+
+    <!-- 3.0: document picker, firmware information, COUI17 -->
+    <string name="select_file_title">选择 OTA 文件</string>
+    <string name="select_file_hint">payload.bin · OTA ZIP · UPDATE.APP\n点击打开系统文件选择器</string>
+    <string name="selected_document">已选择文件</string>
+    <string name="file_size_pending">解析时读取文件大小</string>
+    <string name="change_file">重新选择文件</string>
+    <string name="source_locked">任务进行中，暂时无法更换来源</string>
+    <string name="summary_file_name">文件名称</string>
+    <string name="summary_android_version">Android 版本</string>
+    <string name="summary_kernel_version">内核版本</string>
+    <string name="summary_fingerprint">构建指纹</string>
+    <string name="summary_block_size">块大小</string>
+    <string name="metadata_unknown">未提供或无法读取</string>
+    <string name="metadata_source_hint">信息来自所选固件，不是当前手机；包内缺失或暂不支持读取的字段显示未知。点击信息卡可查看并复制完整内容。</string>
+    <string name="copy_and_close">复制并关闭</string>
+    <string name="search_empty">没有匹配的分区</string>
+    <string name="state_opening">正在打开固件包…</string>
+    <string name="state_reading_archive">正在读取 %1$s…</string>
+    <string name="msg_extract_partial">提取已结束，%1$d 个镜像失败</string>
+    <string name="about_whats_new_title">3.0 新功能</string>
+    <string name="about_whats_new_body">• 本地入口仅通过系统选择文件，本地文件与网络链接独立记忆。\n• 展示固件 Android 版本、安全补丁、内核版本、构建指纹、文件名与文件大小。\n• 根据 COUI17 真实资源重构配色、卡片、字体、分段控件与对话框。\n• 信息展开复制、惰性分区列表与任务期间的来源锁定。\n• 修复 HTTP Range 校验、编码文件名及嵌套镜像输出覆盖。</string>
+    <string name="credits_updater_title">感谢 YuKongA / Updater-KMP · 固件信息参考</string>
 </resources>

@@ -2,95 +2,104 @@
 
 # Payload Dumper · Flux
 
-**English** · [简体中文](README.zh-CN.md)
+**English** · [简体中文](<README.zh-CN.md>)
 
-Extract partition images from **full** Android A/B (`payload.bin`) OTAs — in parallel, on-device, from a local file **or a download link**.
+Extract partition images on Android — from a **picked local file** or an HTTP OTA direct link.
 
+![Version](https://img.shields.io/badge/Version-3.0.0-0080FF)
 ![Platform](https://img.shields.io/badge/Android-11%2B-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.1-7F52FF?logo=kotlin&logoColor=white)
-![UI](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4)
-![License](https://img.shields.io/badge/License-Apache--2.0-blue)
-![Build](https://img.shields.io/badge/Build-GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)
+![UI](https://img.shields.io/badge/UI-COUI17%20%2F%20Compose-0080FF)
+![Build](https://github.com/kexi1412/PayloadDumper-Flux/actions/workflows/build.yml/badge.svg)
 
 </div>
 
----
+## New in 3.0.0
 
-**Payload Dumper · Flux** pulls individual partition images (`boot.img`, `system.img`, `vendor.img`, …) straight out of a full A/B OTA package. Point it at a local `payload.bin` / OTA zip, or paste an OTA **direct link** — it parses the archive over HTTP Range requests and never has to download the whole package first.
+- **Picker-only local source:** tap the file card to open Android's system document picker. Local mode contains no path text field, cannot open the keyboard, and shows the selected name and size. Cancelling the picker keeps the previous selection.
+- **Independent sources:** the local document and network URL are remembered separately. Changing modes cannot accidentally parse the other source; an active task locks source changes.
+- **Firmware information:** Android version, security patch, kernel version, build fingerprint, file name, total file size, partition count and block size. Tap an information card to view/copy its full value.
+- **Resource-based COUI17 design:** light/dark blue palette, independent rounded cards, assignment-style information rows, 32→24sp collapsing title, segmented selector, accessible actions and scrollable About/settings dialogs.
+- **Correctness fixes:** exact HTTP Range validation; RFC 5987/URL filename decoding; lazy partition rows; atomic progress updates; nested-archive output isolation; bounded metadata parsing; source/relink cancellation guards; manifest-bound resume journals.
+- **Version consistency:** `versionName=3.0.0`, `versionCode=30`; About and the default User-Agent follow the build version.
 
-The extraction engine is a from-scratch rewrite built around a **stateless positioned-read source** and a real thread pool, closely following the design of `payload-dumper-c`. The interface follows the **ColorOS 17 (COUI 17)** card-list design language — rounded 22 dp grouped cards, assignment-style info rows, and tinted rounded-square icon containers — built with Jetpack Compose + Material 3.
+See [CHANGELOG](<CHANGELOG.md>) and the [COUI17 reference notes](<docs/COUI17_REFERENCE.md>).
 
-## Highlights
+## Firmware information: sources and limits
 
-- **Two sources** — a local `payload.bin` / OTA zip, or a remote OTA **direct link** (streamed via HTTP Range; no need to fetch the full package up front).
-- **True parallel extraction** — every install operation is an independent task that reads by absolute offset and writes by absolute position, up to `CPU-core-count` in flight. No global lock, no single shared cursor.
-- **SHA-256 verification** — each extracted image is re-hashed and compared against the manifest, with a ✓ / ✗ badge in the UI.
-- **Resumable network downloads** — big partitions are slow and OTA links expire. A link dying mid-download **won't lose progress**: every completed operation is recorded in a `<partition>.img.progress` sidecar (survives app restarts), and a retry only fetches what's missing.
-- **Forced relink + re-verification** — when a network read stalls, a mandatory dialog asks for a fresh link. On submit, the partition's manifest SHA-256 is checked **first** to confirm it's the same ROM before resuming — a mismatched link can't silently corrupt a half-written image. A final whole-image SHA-256 check still runs at the end.
-- **Batch “extract all”**, partition search/filter, per-tile progress rings and status.
-- **Custom User-Agent** (optional).
-- **Light / dark themes**, adaptive icon, and full **English / Simplified Chinese** localization.
+Information describes **the selected firmware**, not the phone running this app. Missing or unsupported values are explicitly shown as unavailable.
 
-## Supported operation types
+| Field | Source |
+|---|---|
+| File name / total size | SAF document metadata and descriptor length, or the final HTTP URL / Content-Disposition and Content-Range total |
+| Android version | Target `post-build` fingerprint / protobuf postcondition, target `build.prop`, or a known target SDK mapping; optional boot header fallback |
+| Security patch | Target OTA metadata, target `build.prop`, payload manifest, or boot header **month precision** fallback |
+| Build fingerprint | Target OTA metadata or target `build.prop`; never the pre-update build or a partition hash |
+| Kernel version | `Linux version` banner in the target `boot.img` kernel region, including supported gzip/LZ4 kernel encodings |
 
-The four used by standard full OTAs: `REPLACE`, `REPLACE_BZ` (bzip2), `REPLACE_XZ` (xz/lzma), and `ZERO` / `DISCARD`. Decompressed data is scattered across **all** of a partition's `dst_extents` (not just the first), matching `payload-dumper-c` behavior.
+The reader supports `META-INF/com/android/metadata.pb` and text `metadata` in STORED or DEFLATE ZIP entries, with range, exact length and CRC checks. It reads explicitly named `build.prop` ZIP entries; it does **not** download/mount an entire system/vendor image to discover properties.
 
-For **unrecognized** operation types, the engine sniffs the block's magic bytes (zstd `28 B5 2F FD` / xz / bzip2) and picks a decoder automatically — so even a non-standard OEM zstd block works without guessing enum numbers.
+Kernel inspection reconstructs the needed boot prefix from full-payload operations and maps every destination extent. It does not use the reference project's fixed percentage sample. Metadata is limited to 1 MiB per entry; boot inspection to 64 MiB, 16 MiB per operation and a 64 MiB read budget. XZ inspection also has a decoder memory limit. Unsupported/delta boot data, absent metadata or an exceeded budget leaves fields unavailable without blocking normal extraction. A bare `payload.bin` often cannot supply an Android version or fingerprint.
 
-> Incremental (delta) OTAs are **not** supported (`SOURCE_COPY` / `SOURCE_BSDIFF` / `BROTLI_BSDIFF`, …); the app reports this clearly. Use a full package.
+## Extraction support
 
-## Architecture
+- **Full A/B OTA:** raw `payload.bin`, or an OTA ZIP with a STORED `payload.bin`.
+- **Firmware ZIP images, Huawei UPDATE.APP and Honor/Huawei nested SD update packages:** image enumeration, per-image extraction, and a single streaming pass for images sharing an inner ZIP. Block-based OTA containers expose their data/list files; they are not automatically converted to reconstructed filesystem images.
+- **Parallel full-payload operations:** positioned reads and writes with bounded worker concurrency; `REPLACE`, `REPLACE_BZ`, `REPLACE_XZ`, `ZERO` and `DISCARD`. Known delta operations require old partition data and are not supported.
+- **SHA-256 verification:** operation hashes when present, plus the optional final image hash. Invalid ranges or decoded lengths are rejected rather than marked complete.
+- **Resume:** completed operations are journaled with the exact manifest, partition and block-size identity. Unbound legacy journals, a different manifest, or a missing/truncated output image cannot skip writes. A replacement URL must serve an identical full manifest/operation layout before existing progress is reused.
+- Search/filter, per-image status, custom User-Agent, and English/Simplified Chinese localization.
 
-```
-core/
-  PayloadSource.kt    Stateless positioned-read interface + FileSource (FileChannel) + HttpSource (one Range request per read)
-  ZipLocator.kt       Locates payload.bin inside an OTA zip central directory (ZIP64-aware); same path for file & URL
-  PayloadParser.kt    Parses the CrAU header (big-endian) + protobuf manifest
-  Decompressor.kt     xz / bzip2 / zstd (+ magic-byte sniffing fallback)
-  PayloadExtractor.kt Parallel engine: semaphore throttling, positioned writes, scattered extents, SHA-256 verify
-  Net.kt              OkHttp client (injects custom UA / headers)
-model/      Data models shared between UI and engine
-viewmodel/  DumperViewModel: parse / extract / state orchestration (StateFlow)
-ui/         ColorOS 17 (COUI 17) theme + components + main screen
-```
+Output defaults to `Download/PayloadDumper/<firmware>/`. Nested archives use separate subdirectories to avoid collisions such as two different `preload.img` entries. Archive/provider names are treated as leaf names and checked against the chosen output directory.
 
-**Key design:** every read through `PayloadSource` is a **stateless positioned read** (`readAt(offset, len)`), mirroring `payload-dumper-c`'s `source_interface.h` (clone / read-at-offset / destroy). That's what lets multiple workers extract concurrently over both file and network sources.
+## COUI17 implementation
 
-## Localization
+The palette, component dimensions and selected text-style inheritance were checked against the user-supplied **Settings 17.0.0** sample. Examples: `#0080FF` / `#1A8CFF` accent, 12dp COUI preference card radius, 16sp list titles and 13sp assignment values. The 20dp SettingsLib token is a separate `v36` resource and is not labelled as a COUI outer-card size.
 
-The entire UI — screens, dialogs, and status/error messages — is driven by string resources, so it follows the **current system language** (or the per-app language on Android 13+, wired via `generateLocaleConfig`). **English** (default) and **Simplified Chinese** (`zh-rCN`) ship in the app. To add a language, drop a `res/values-<locale>/strings.xml` alongside the existing ones — no code changes required.
+This is a Compose implementation using the project's own icons. OEM fonts, assets and runtime libraries are not bundled. Circular corners, line heights, press animations and 48dp interaction targets are documented adaptations; static resource analysis alone is not a claim of pixel-identical runtime blur or spring motion. Details, resource IDs and sample hashes are in [the reference report](<docs/COUI17_REFERENCE.md>).
 
-## Build (GitHub Actions — recommended)
+## Build and test
 
-The repo ships a `.github/workflows/build.yml` that, on `ubuntu-latest` (x86_64), installs JDK 21 + Android SDK, runs `assembleRelease`, signs with a keystore generated inside the workflow, and produces an installable APK.
-
-- Push to `main` or trigger manually (**Actions → Build APK → Run workflow**).
-- Output: the run's **Artifact** (`PayloadDumper-Flux-apk`), plus an auto-published **Release**.
-- Zero secrets. Note: each build generates a **fresh signing key**, so uninstall the old version before installing over it.
-
-## Build locally
+Requires JDK 21, Android SDK Platform 35 / Build-Tools 35, Gradle 8.10.2, AGP 8.8 and Kotlin 2.1.
 
 ```bash
-./gradlew assembleRelease
-# Output: app/build/outputs/apk/release/app-release-unsigned.apk
-# zipalign + apksigner it yourself before installing
+./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease
+# unsigned release: app/build/outputs/apk/release/app-release-unsigned.apk
+./gradlew connectedDebugAndroidTest  # requires a connected Android device/emulator
 ```
 
-Requires: JDK 21, Android SDK Platform 35 / Build-Tools 35, AGP 8.8, Kotlin 2.1.
+On Windows, use `gradlew.bat`. Put the checkout/SDK under an ASCII path (a directory junction is sufficient), and **quote dotted Gradle arguments** in PowerShell:
+
+```powershell
+& .\gradlew.bat '-Pandroid.overridePathCheck=true' testDebugUnitTest assembleRelease
+```
+
+The repository's [GitHub Actions build](<.github/workflows/build.yml>) runs tests/lint, builds and signs an APK, and publishes it as an artifact and Release. Signing configuration is documented in the workflow; a build using a different signing certificate cannot replace an older installed APK with the same application ID.
+
+The regression suite covers target-versus-pre-update metadata, protobuf-only packages, unknown fields, CRC/truncation/size failures, boot headers and gzip/LZ4 kernels, multi-extent boot reconstruction, source separation, encoded filenames, strict Range responses, and resume/extraction boundary cases. Compose instrumentation tests assert that local mode has **zero text-edit actions**; network mode alone has an editor.
 
 ## Permissions
 
-Needs **All files access** (`MANAGE_EXTERNAL_STORAGE`) to read local packages from any path and write `.img` files to the download folder. The app walks you through granting it the first time it's needed.
+Reading a picked local document uses its SAF URI grant and does **not** need All files access. Extraction to the chosen filesystem/download folder still requires `MANAGE_EXTERNAL_STORAGE`; the app opens the relevant settings when needed. Network direct links must provide correct HTTP Range responses. No GitHub token, Xiaomi account or updater API credential is required by the app.
+
+## Architecture
+
+```text
+core/       Positioned sources, ZIP/container parsing, metadata/boot inspection,
+            bounded full-payload extraction, verification and identity-bound resume
+model/      Shared firmware, partition and independent source-selection models
+viewmodel/  StateFlow orchestration, task locking and generation-checked relinking
+ui/         Resource-based COUI17 Compose theme, file picker and information cards
+```
 
 ## Credits
 
-- **xyiguanle** — payload analysis source; the engine's parsing logic is heavily inspired by it.
-- **[rcmiku/Payload-Dumper-Compose](https://github.com/rcmiku/Payload-Dumper-Compose)** — the predecessor project; feature and flow reference.
-- Engine reference: `payload-dumper-c` (thread pool / stateless source / scattered-extent writes).
-- Dependencies: Jetpack Compose, OkHttp, Apache Commons Compress, tukaani-xz, aircompressor, protobuf.
-
-The UI layout is designed for this project; the palette follows the ColorOS 17 (COUI 17) design system extracted from the native Settings app.
+- **[YuKongA (yukong) / Updater-KMP](<https://github.com/YuKongA/Updater-KMP>)** — thank you for the OTA metadata and kernel-inspection ideas and firmware-information presentation. Reference revision: `73db06dc98d04fe33deebbc6e34b260ed8269aea`. Flux implements its reader independently; it does not use the Xiaomi-only API, ODM-priority policy or percentage-based boot sampling.
+- **xyiguanle** — payload analysis source.
+- **[rcmiku/Payload-Dumper-Compose](<https://github.com/rcmiku/Payload-Dumper-Compose>)** — predecessor and feature-flow reference.
+- **payload-dumper-c** — positioned-source and parallel/scattered-write engine design reference.
+- Jetpack Compose, OkHttp, Apache Commons Compress, tukaani-xz, aircompressor and protobuf.
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE). `app/src/main/proto/update_metadata.proto` is from AOSP (Apache-2.0).
+Apache-2.0 — see [LICENSE](<LICENSE>). The update-metadata protobuf schema comes from AOSP (Apache-2.0). Updater-KMP is also Apache-2.0; no upstream source or OEM binary assets were copied into this refactor.

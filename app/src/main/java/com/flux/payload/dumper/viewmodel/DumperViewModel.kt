@@ -2,6 +2,7 @@ package com.flux.payload.dumper.viewmodel
 
 import android.net.Uri
 import android.os.Environment
+import android.provider.OpenableColumns
 import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,7 +10,6 @@ import chromeos_update_engine.UpdateMetadata.PartitionUpdate
 import com.flux.payload.dumper.DumperApplication
 import com.flux.payload.dumper.R
 import com.flux.payload.dumper.core.Diagnostics
-import com.flux.payload.dumper.core.FileSource
 import com.flux.payload.dumper.core.HttpSource
 import com.flux.payload.dumper.core.NestedZipStream
 import com.flux.payload.dumper.core.Net
@@ -17,16 +17,22 @@ import com.flux.payload.dumper.core.ParseResult
 import com.flux.payload.dumper.core.PayloadExtractor
 import com.flux.payload.dumper.core.PayloadParser
 import com.flux.payload.dumper.core.PayloadSource
+import com.flux.payload.dumper.core.OutputPaths
+import com.flux.payload.dumper.core.payloadResumeIdentity
 import com.flux.payload.dumper.core.ResumeState
 import com.flux.payload.dumper.core.UniversalParser
 import com.flux.payload.dumper.core.UriSource
 import com.flux.payload.dumper.core.toHex
 import com.flux.payload.dumper.data.Preferences
 import com.flux.payload.dumper.model.ArchiveInfo
+import com.flux.payload.dumper.model.LocalDocument
+import com.flux.payload.dumper.model.SourceMode
+import com.flux.payload.dumper.model.SourceSelection
 import com.flux.payload.dumper.model.ExtractState
 import com.flux.payload.dumper.model.Payload
 import com.flux.payload.dumper.model.PartitionInfo
 import com.flux.payload.dumper.model.VerifyState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,7 +40,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -71,9 +82,27 @@ class DumperViewModel : ViewModel() {
     // A partition whose network extraction stalled (e.g. expired link) and needs a fresh URL.
     private val _relink = MutableStateFlow<String?>(null)
     val relink: StateFlow<String?> = _relink.asStateFlow()
+    private val _relinkBusy = MutableStateFlow(false)
+    val relinkBusy: StateFlow<Boolean> = _relinkBusy.asStateFlow()
+    private var relinkJob: Job? = null
+    private var relinkEpoch = 0L
+    private var archiveGeneration = 0L
+    private val relinkLock = combine(_relink, _relinkBusy) { name, busy -> name != null || busy }
 
-    private val _input = MutableStateFlow(Preferences.getString(Preferences.KEY_PATH_OR_URL) ?: "")
-    val input: StateFlow<String> = _input.asStateFlow()
+    private val _selection = MutableStateFlow(loadSelection())
+    val selection: StateFlow<SourceSelection> = _selection.asStateFlow()
+    private val _resolvingDocument = MutableStateFlow(false)
+    private val _batchRunning = MutableStateFlow(false)
+    val batchRunning: StateFlow<Boolean> = _batchRunning.asStateFlow()
+    private var parseJob: Job? = null
+    private var batchJob: Job? = null
+
+    val inputLocked: StateFlow<Boolean> by lazy {
+        combine(_parseState, _partitions, _resolvingDocument, _batchRunning, relinkLock) { state, rows, resolving, batch, relink ->
+            state is ParseState.Parsing || resolving || batch || relink ||
+                rows.any { it.extractState == ExtractState.RUNNING }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    }
 
     private val _parseState = MutableStateFlow<ParseState>(ParseState.Idle)
     val parseState: StateFlow<ParseState> = _parseState.asStateFlow()
@@ -101,9 +130,89 @@ class DumperViewModel : ViewModel() {
     private val _snackbar = MutableStateFlow<String?>(null)
     val snackbar: StateFlow<String?> = _snackbar.asStateFlow()
 
-    fun updateInput(value: String) {
-        _input.value = value
-        Preferences.setString(Preferences.KEY_PATH_OR_URL, value)
+    private fun loadSelection(): SourceSelection {
+        val legacy = SourceSelection.fromLegacy(Preferences.getString(Preferences.KEY_PATH_OR_URL).orEmpty())
+        val uri = Preferences.getString(Preferences.KEY_LOCAL_URI) ?: legacy.local?.uri
+        return SourceSelection(
+            mode = runCatching {
+                SourceMode.valueOf(Preferences.getString(Preferences.KEY_SOURCE_MODE) ?: legacy.mode.name)
+            }.getOrDefault(SourceMode.LOCAL),
+            local = uri?.takeIf { it.startsWith("content://") }?.let { LocalDocument(it) },
+            networkUrl = Preferences.getString(Preferences.KEY_NETWORK_URL) ?: legacy.networkUrl,
+        )
+    }
+
+    private fun isWorking(): Boolean = _parseState.value is ParseState.Parsing ||
+        _resolvingDocument.value || _batchRunning.value || _relink.value != null || _relinkBusy.value ||
+        jobs.values.any { it.isActive }
+
+    private fun resetArchive() {
+        archiveGeneration++
+        closeSource()
+        payload = null
+        parseResult = null
+        rawEntries.clear()
+        resumeStates.clear()
+        _extractedInBatch.clear()
+        sessionOutputDir = null
+        _partitions.value = emptyList()
+        _search.value = ""
+        _parseState.value = ParseState.Idle
+    }
+
+    fun changeSourceMode(mode: SourceMode) {
+        if (isWorking() || mode == _selection.value.mode) return
+        resetArchive()
+        _selection.update { it.copy(mode = mode) }
+        Preferences.setString(Preferences.KEY_SOURCE_MODE, mode.name)
+        if (mode == SourceMode.LOCAL) refreshDocumentDetails()
+    }
+
+    fun updateNetworkUrl(value: String) {
+        if (isWorking() || value == _selection.value.networkUrl) return
+        resetArchive()
+        _selection.update { it.copy(networkUrl = value) }
+        Preferences.setString(Preferences.KEY_NETWORK_URL, value)
+    }
+
+    /** Read the provider's DISPLAY_NAME/SIZE off the UI thread. A cancelled picker never calls this. */
+    fun selectDocument(uri: Uri) {
+        if (isWorking() || uri.scheme != "content") return
+        _resolvingDocument.value = true
+        viewModelScope.launch {
+            try {
+                val document = withContext(Dispatchers.IO) {
+                    var name = ""
+                    var size: Long? = null
+                    runCatching {
+                        DumperApplication.appContext.contentResolver.query(
+                            uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null,
+                        )?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                                if (nameIndex >= 0 && !cursor.isNull(nameIndex)) name = cursor.getString(nameIndex).orEmpty()
+                                if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) size = cursor.getLong(sizeIndex).takeIf { it >= 0 }
+                            }
+                        }
+                    }
+                    LocalDocument(uri.toString(), name, size)
+                }
+                resetArchive()
+                _selection.update { it.copy(mode = SourceMode.LOCAL, local = document) }
+                Preferences.setString(Preferences.KEY_LOCAL_URI, document.uri)
+                Preferences.setString(Preferences.KEY_SOURCE_MODE, SourceMode.LOCAL.name)
+            } finally {
+                _resolvingDocument.value = false
+            }
+        }
+    }
+
+    fun refreshDocumentDetails() {
+        val document = _selection.value.local ?: return
+        if (document.displayName.isBlank() && _selection.value.mode == SourceMode.LOCAL) {
+            selectDocument(Uri.parse(document.uri))
+        }
     }
 
     fun updateSearch(value: String) { _search.value = value }
@@ -153,9 +262,15 @@ class DumperViewModel : ViewModel() {
     private val _extractedInBatch = mutableSetOf<String>()
 
     fun parse() {
-        val raw = _input.value.trim()
-        if (raw.isEmpty()) { _snackbar.value = str(R.string.msg_input_required); return }
-        _parseState.value = ParseState.Parsing("Opening archive…")
+        if (isWorking()) return
+        val selected = _selection.value
+        val raw = selected.activeSource
+        if (!selected.canParse) {
+            _snackbar.value = str(if (selected.mode == SourceMode.LOCAL) R.string.msg_input_required else R.string.msg_invalid_http)
+            return
+        }
+        val generation = ++archiveGeneration
+        _parseState.value = ParseState.Parsing(str(R.string.state_opening))
         // Drop the previous archive's rows up front. This used to happen in onSuccess, but rows
         // are now published incrementally as each nested archive is scanned, so clearing there
         // would discard entries the user is already extracting. Resetting here instead means the
@@ -168,26 +283,17 @@ class DumperViewModel : ViewModel() {
         // actually opened. Assigning only on success (as before) meant a parse failure had
         // nothing to report on — exactly the case the report exists for.
         var opened: PayloadSource? = null
-        viewModelScope.launch {
+        parseJob = viewModelScope.launch {
             runCatching {
-                withContext(Dispatchers.IO) {
+                runInterruptible(Dispatchers.IO) {
                     closeSource()
-                    val src: PayloadSource = when {
-                        raw.startsWith("http://") || raw.startsWith("https://") ->
-                            HttpSource.open(raw, client)
-                        raw.startsWith("content://") ->
-                            runCatching { UriSource.open(DumperApplication.appContext, Uri.parse(raw)) }
-                                .getOrElse { throw java.io.IOException(str(R.string.err_file_unreadable, raw)) }
-                        else -> {
-                            val f = File(raw)
-                            if (!f.exists() || !f.canRead()) throw java.io.IOException(str(R.string.err_file_unreadable, raw))
-                            FileSource(f)
-                        }
+                    val src: PayloadSource = if (selected.mode == SourceMode.NETWORK) {
+                        HttpSource.open(raw, client)
+                    } else {
+                        UriSource.open(DumperApplication.appContext, Uri.parse(raw))
                     }
                     opened = src
-                    _parseState.value = ParseState.Parsing(
-                        "Measuring ${src.fileName()} — ${src.size / (1 shl 20)} MB…"
-                    )
+                    _parseState.value = ParseState.Parsing(str(R.string.state_reading_archive, src.fileName()))
                     val result = UniversalParser.parse(
                         source = src,
                         onProgress = { msg -> _parseState.value = ParseState.Parsing(msg) },
@@ -195,15 +301,22 @@ class DumperViewModel : ViewModel() {
                         // is three nested archives and scanning them is inherently sequential
                         // (each is a multi-GB DEFLATE stream), so waiting for the last one before
                         // showing anything means tens of seconds of an apparently empty screen.
-                        // Emitting per archive lets the user read and even extract the first
-                        // archive's images while the rest is still being inflated.
+                        // Emitting per archive lets the user inspect the first archive's images
+                        // while the rest is being scanned; extraction waits for a committed source.
                         onPartial = { partial -> publishRawEntries(partial) },
                     )
-                    source = src
-                    parseResult = result
                     result
                 }
             }.onSuccess { result ->
+                if (generation != archiveGeneration) {
+                    runCatching { opened?.close() }
+                    return@onSuccess
+                }
+                source = opened
+                parseResult = result
+                if (selected.mode == SourceMode.LOCAL) {
+                    _selection.update { it.copy(local = it.local?.copy(displayName = result.archiveInfo.fileName, size = result.archiveInfo.fileSize)) }
+                }
                 sessionOutputDir = resolveOutputDir(srcFileName(result))
                 resumeStates.clear()
                 // NB: `rawEntries` is deliberately NOT cleared here. Rows were already published
@@ -217,15 +330,7 @@ class DumperViewModel : ViewModel() {
                     is ParseResult.CrAU -> {
                         payload = result.payload
                         _partitions.value = result.payload.manifest.partitionsList.map { it.toInfo() }
-                        _parseState.value = ParseState.Ready(
-                            ArchiveInfo(
-                                fileName = result.payload.fileName,
-                                fileSize = result.payload.archiveSize,
-                                securityPatchLevel = result.payload.manifest.securityPatchLevel.ifEmpty { "—" },
-                                partitionCount = result.payload.manifest.partitionsCount,
-                                blockSize = result.payload.blockSize,
-                            )
-                        )
+                        _parseState.value = ParseState.Ready(result.archiveInfo)
                     }
                     is ParseResult.RawEntries -> {
                         payload = null
@@ -244,6 +349,16 @@ class DumperViewModel : ViewModel() {
                     }
                 }
             }.onFailure { e ->
+                if (e is CancellationException) {
+                    runCatching { opened?.close() }
+                    if (generation == archiveGeneration) {
+                        source = null
+                        rawEntries.clear()
+                        _partitions.value = emptyList()
+                        _parseState.value = ParseState.Idle
+                    }
+                    throw e
+                }
                 // `runCatching` is `catch (Throwable)`, so this also lands here for
                 // OutOfMemoryError and StackOverflowError — both of which carry a null
                 // message. Reporting `e.message` alone therefore collapsed every distinct
@@ -254,6 +369,10 @@ class DumperViewModel : ViewModel() {
                     append(Diagnostics.describe(e))
                     if (report != null) append("\n\n报告已写入：${report.absolutePath}")
                 }
+                runCatching { opened?.close() }
+                source = null
+                rawEntries.clear()
+                _partitions.value = emptyList()
                 _parseState.value = ParseState.Failed(detail)
                 _snackbar.value = if (Diagnostics.isOutOfMemory(e)) {
                     str(R.string.err_out_of_memory)
@@ -265,6 +384,13 @@ class DumperViewModel : ViewModel() {
     }
 
     fun extract(partitionName: String) {
+        if (_batchRunning.value || _relinkBusy.value) return
+        extractInternal(partitionName)
+    }
+
+    private fun extractInternal(partitionName: String) {
+        // Partial rows are informational until the archive/source is fully committed.
+        if (_parseState.value !is ParseState.Ready || _relink.value != null) return
         // CrAU path (existing)
         val pl = payload
         if (pl != null) {
@@ -282,7 +408,8 @@ class DumperViewModel : ViewModel() {
             update(partitionName) { it.copy(extractState = ExtractState.RUNNING, verifyState = VerifyState.NONE, message = "") }
             runCatching {
                 withContext(Dispatchers.IO) {
-                    val outFile = File(outDir, File(entry.name).name)
+                    val entryDir = (entry.origin as? ParseResult.Origin.NestedZip)?.let { nestedOutputDir(src, it.ref) } ?: outDir
+                    val outFile = OutputPaths.child(entryDir, entry.name)
                     outFile.parentFile?.mkdirs()
                     when (val origin = entry.origin) {
                         is ParseResult.Origin.OuterRange -> {
@@ -291,7 +418,7 @@ class DumperViewModel : ViewModel() {
                                     update(partitionName) { it.copy(progress = p) }
                                 }
                             } else {
-                                inflateRawRange(src, origin.offset, origin.compressedSize, outFile) { p ->
+                                inflateRawRange(src, origin.offset, origin.compressedSize, origin.uncompressedSize, outFile) { p ->
                                     update(partitionName) { it.copy(progress = p) }
                                 }
                             }
@@ -320,7 +447,7 @@ class DumperViewModel : ViewModel() {
                             if (written.absolutePath != outFile.absolutePath) {
                                 outFile.parentFile?.mkdirs()
                                 written.copyTo(outFile, overwrite = true)
-                                written.delete()
+                                if (written.canonicalFile.parentFile == nestedDir.canonicalFile) written.delete()
                             }
                         }
                     }
@@ -330,6 +457,10 @@ class DumperViewModel : ViewModel() {
                 update(partitionName) { it.copy(extractState = ExtractState.DONE, progress = 1f, verifyState = VerifyState.SKIPPED) }
                 _snackbar.value = "${entry.name} → ${outFile.absolutePath}"
             }.onFailure { e ->
+                if (e is CancellationException) {
+                    update(partitionName) { it.copy(extractState = ExtractState.PAUSED, message = str(R.string.msg_cancelled_progress_kept)) }
+                    throw e
+                }
                 update(partitionName) { it.copy(extractState = ExtractState.ERROR, message = e.message ?: str(R.string.state_extract_failed)) }
                 _snackbar.value = "$partitionName: ${e.message}"
             }
@@ -339,11 +470,11 @@ class DumperViewModel : ViewModel() {
 
     private fun extractCrAU(partitionName: String, pl: com.flux.payload.dumper.model.Payload) {
         val src = source ?: return
-        if (jobs[partitionName]?.isActive == true) return
+        if (!Regex("[A-Za-z0-9_-]+").matches(partitionName) || jobs[partitionName]?.isActive == true) return
         val part = pl.manifest.partitionsList.firstOrNull { it.partitionName == partitionName } ?: return
         val outDir = sessionOutputDir ?: resolveOutputDir(pl.fileName).also { sessionOutputDir = it }
         val resume = resumeStates.getOrPut(partitionName) {
-            ResumeState(File(outDir, "$partitionName.img.progress")).also { it.load() }
+            ResumeState(OutputPaths.child(outDir, "$partitionName.img.progress"), payloadResumeIdentity(pl, partitionName), part.operationsCount)
         }
 
         val job = viewModelScope.launch {
@@ -363,6 +494,10 @@ class DumperViewModel : ViewModel() {
                 resumeStates.remove(partitionName)
                 if (result.verified == false) _snackbar.value = str(R.string.msg_extract_verify_failed, partitionName)
             }.onFailure { e ->
+                if (e is CancellationException) {
+                    update(partitionName) { it.copy(extractState = ExtractState.PAUSED, message = str(R.string.msg_cancelled_progress_kept)) }
+                    throw e
+                }
                 // A network read that died on a remote source is almost always an expired/broken OTA
                 // link. Keep the partial output + resume state and ask the user for a fresh link.
                 if (source is HttpSource && e is IOException) {
@@ -379,55 +514,83 @@ class DumperViewModel : ViewModel() {
         jobs[partitionName] = job
     }
 
-    /**
-     * Supply a fresh URL for a stalled partition. The new link is re-parsed and its manifest hash
-     * for this partition is compared against the original — a mismatch means it's a *different*
-     * ROM, which we reject to avoid corrupting the half-written image. On a match we swap in the
-     * new source and resume, skipping the operations already on disk.
-     */
+    /** A relink may resume operation indices only when the WHOLE manifest/layout matches. */
     fun submitNewLink(newUrl: String) {
         val name = _relink.value ?: return
+        if (_relinkBusy.value) return
+        val original = payload ?: return
         val url = newUrl.trim()
-        if (!(url.startsWith("http://") || url.startsWith("https://"))) {
-            _snackbar.value = str(R.string.msg_invalid_http); return
+        if (!SourceSelection.isHttpUrl(url)) {
+            _snackbar.value = str(R.string.msg_invalid_http)
+            return
         }
-        viewModelScope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    val newSrc = HttpSource.open(url, client)
-                    val newPl = PayloadParser.parse(newSrc)
-                    val newPart = newPl.manifest.partitionsList.firstOrNull { it.partitionName == name }
-                        ?: throw IOException(str(R.string.err_partition_missing, name))
-                    val expected = _partitions.value.firstOrNull { it.partitionName == name }?.sha256.orEmpty()
-                    val fresh = if (newPart.hasNewPartitionInfo()) newPart.newPartitionInfo.hash.toHex() else ""
-                    if (expected.isNotEmpty() && fresh.isNotEmpty() && expected != fresh) {
-                        newSrc.close()
+        val generation = archiveGeneration
+        val epoch = ++relinkEpoch
+        val expected = original.manifest.toByteArray()
+        _relinkBusy.value = true
+        relinkJob = viewModelScope.launch {
+            val thisJob = currentCoroutineContext()[Job]
+            var candidate: HttpSource? = null
+            var committed = false
+            try {
+                // No reader may keep using the old descriptor while a replacement is committed.
+                jobs.values.toList().forEach { if (it.isActive) it.cancelAndJoin() }
+                batchJob?.join()
+                val freshPayload = runInterruptible(Dispatchers.IO) {
+                    val freshSource = HttpSource.open(url, client)
+                    candidate = freshSource
+                    val fresh = PayloadParser.parse(freshSource)
+                    if (fresh.manifest.partitionsList.none { it.partitionName == name }) {
+                        throw IOException(str(R.string.err_partition_missing, name))
+                    }
+                    if (fresh.blockSize != original.blockSize || !expected.contentEquals(fresh.manifest.toByteArray())) {
                         throw IOException(str(R.string.err_different_rom, name))
                     }
-                    runCatching { source?.close() }
-                    source = newSrc
-                    payload = newPl
+                    fresh
                 }
-            }.onSuccess {
+                currentCoroutineContext().ensureActive()
+                if (generation != archiveGeneration || epoch != relinkEpoch || _relink.value != name) return@launch
+                val freshSource = candidate ?: throw IOException(str(R.string.msg_relink_failed))
+                runCatching { source?.close() }
+                source = freshSource
+                payload = freshPayload
+                committed = true
+                _selection.update { it.copy(networkUrl = url) }
+                Preferences.setString(Preferences.KEY_NETWORK_URL, url)
+                val ready = _parseState.value as? ParseState.Ready
+                if (ready != null) _parseState.value = ready.copy(archive = ready.archive.copy(fileName = freshSource.fileName(), fileSize = freshSource.size))
                 _relink.value = null
+                _relinkBusy.value = false
                 _snackbar.value = str(R.string.msg_resume_same_rom, name)
-                extract(name) // resumes: completed ops are skipped via the retained ResumeState
-            }.onFailure { e ->
-                _snackbar.value = e.message ?: str(R.string.msg_relink_failed)
+                extractInternal(name)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (generation == archiveGeneration && epoch == relinkEpoch) _snackbar.value = e.message ?: str(R.string.msg_relink_failed)
+            } finally {
+                if (!committed) runCatching { candidate?.close() }
+                if (relinkJob == thisJob) {
+                    _relinkBusy.value = false
+                    relinkJob = null
+                }
             }
         }
     }
 
-    /** Give up on the stalled partition instead of relinking. */
     fun cancelRelink() {
         val name = _relink.value ?: return
+        relinkEpoch++
+        relinkJob?.cancel()
         _relink.value = null
         update(name) { it.copy(extractState = ExtractState.ERROR, message = str(R.string.msg_cancelled_progress_kept)) }
     }
 
     fun extractAll() {
+        if (_parseState.value !is ParseState.Ready || isWorking()) return
         val current = _partitions.value
-        viewModelScope.launch {
+        _batchRunning.value = true
+        batchJob = viewModelScope.launch {
+            try {
             // Batched fast path: entries sharing a nested ZIP are pulled out in ONE stream
             // pass. Honour packages nest ~45 images inside a single 9 GB ZIP, so doing this
             // per-entry would re-stream 9 GB forty-five times (~45 min); batching makes it one.
@@ -447,11 +610,15 @@ class DumperViewModel : ViewModel() {
             for (p in current) {
                 if (_extractedInBatch.contains(p.partitionName)) continue
                 if (p.extractState == ExtractState.DONE) continue
-                extract(p.partitionName)
+                extractInternal(p.partitionName)
                 jobs[p.partitionName]?.join()
                 if (_relink.value != null) return@launch
             }
-            _snackbar.value = str(R.string.msg_all_done)
+            val failures = _partitions.value.count { it.extractState == ExtractState.ERROR || it.verifyState == VerifyState.FAILED }
+            _snackbar.value = if (failures == 0) str(R.string.msg_all_done) else str(R.string.msg_extract_partial, failures)
+            } finally {
+                _batchRunning.value = false
+            }
         }
     }
 
@@ -535,6 +702,7 @@ class DumperViewModel : ViewModel() {
                     str(R.string.msg_nested_partial, produced.size, missing)
                 }
             }.onFailure { e ->
+                if (e is CancellationException) throw e
                 val report = Diagnostics.dump(DumperApplication.appContext, src, "nested-extract", e)
                 names.forEach { n ->
                     update(n) {
@@ -552,25 +720,23 @@ class DumperViewModel : ViewModel() {
     /** `Download/PayloadDumper/<rom>/<nested-archive>/` so colliding basenames stay apart. */
     private fun nestedOutputDir(src: PayloadSource, ref: NestedZipStream.Ref): File {
         val base = sessionOutputDir ?: resolveOutputDir(src.fileName()).also { sessionOutputDir = it }
-        val leaf = ref.outerName.substringAfterLast('/').removeSuffix(".zip").ifBlank { "nested" }
-        return File(base, leaf)
+        return OutputPaths.child(base, OutputPaths.archiveFolder(ref.outerName))
     }
 
     private fun resolveOutputDir(fileName: String): File {
-        val romName = fileName.removeSuffix(".zip").removeSuffix(".bin")
         val custom = Preferences.getString(Preferences.KEY_OUTPUT_FOLDER)
-        return if (!custom.isNullOrBlank()) File(custom, romName)
-        else File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "PayloadDumper/$romName")
+        val root = if (!custom.isNullOrBlank()) File(custom)
+            else File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "PayloadDumper")
+        return OutputPaths.child(root, OutputPaths.archiveFolder(fileName))
     }
 
     private inline fun update(name: String, crossinline transform: (PartitionInfo) -> PartitionInfo) {
-        _partitions.value = _partitions.value.map { if (it.partitionName == name) transform(it) else it }
+        _partitions.update { rows -> rows.map { if (it.partitionName == name) transform(it) else it } }
     }
 
     private fun PartitionUpdate.toInfo(): PartitionInfo {
         val ops = operationsList
-        val compressed = if (ops.isEmpty()) 0L
-        else (ops.last().dataOffset + ops.last().dataLength) - ops.first().dataOffset
+        val compressed = ops.sumOf { it.dataLength }
         return PartitionInfo(
             partitionName = partitionName,
             size = if (hasNewPartitionInfo()) newPartitionInfo.size else 0L,
@@ -605,6 +771,12 @@ class DumperViewModel : ViewModel() {
     }
 
     override fun onCleared() {
+        archiveGeneration++
+        relinkEpoch++
+        parseJob?.cancel()
+        batchJob?.cancel()
+        relinkJob?.cancel()
+        jobs.values.forEach { it.cancel() }
         super.onCleared()
         closeSource()
     }
@@ -619,65 +791,71 @@ class DumperViewModel : ViewModel() {
     ) = withContext(Dispatchers.IO) {
         val raf = RandomAccessFile(outFile, "rw")
         try {
+            require(offset >= 0 && size >= 0 && offset <= source.size - size) { "Archive entry outside source" }
             raf.setLength(size)
             val channel = raf.channel
             val bufSize = 65536
             val buffer = ByteArray(bufSize)
             var pos = 0L
             while (pos < size) {
+                currentCoroutineContext().ensureActive()
                 val toRead = minOf(bufSize.toLong(), size - pos).toInt()
                 source.readFully(offset + pos, buffer, 0, toRead)
-                channel.write(java.nio.ByteBuffer.wrap(buffer, 0, toRead), pos)
-                pos += toRead
+                val bytes = java.nio.ByteBuffer.wrap(buffer, 0, toRead)
+                while (bytes.hasRemaining()) {
+                    val written = channel.write(bytes, pos)
+                    if (written <= 0) throw IOException("Output write made no progress")
+                    pos += written
+                }
                 onProgress(pos.toFloat() / size)
             }
+            channel.force(true)
         } finally {
             raf.close()
         }
     }
 
-    /** Inflate compressed data from [source] at [offset] to [outFile], streaming. */
+    /** Stream raw DEFLATE without accepting truncated or over-expanded entries. */
     private suspend fun inflateRawRange(
         source: PayloadSource,
         offset: Long,
         compressedSize: Long,
+        expectedSize: Long,
         outFile: File,
         onProgress: (Float) -> Unit,
     ) = withContext(Dispatchers.IO) {
-        // ZIP entries hold RAW DEFLATE streams (no zlib header/checksum), so `nowrap` must be
-        // set — a default Inflater() would reject the very first block as a bad header.
+        require(offset >= 0 && compressedSize >= 0 && expectedSize >= 0 && offset <= source.size - compressedSize)
         val inflater = java.util.zip.Inflater(true)
         try {
-            val inputBuf = ByteArray(256 * 1024)
-            val outputBuf = ByteArray(512 * 1024)
-            var srcPos = offset
+            val input = ByteArray(256 * 1024)
+            val output = ByteArray(512 * 1024)
             var consumed = 0L
-
-            java.io.FileOutputStream(outFile).use { fos ->
-                while (consumed < compressedSize) {
-                    val toRead = minOf(inputBuf.size.toLong(), compressedSize - consumed).toInt()
-                    source.readFully(srcPos, inputBuf, 0, toRead)
-                    inflater.setInput(inputBuf, 0, toRead)
-                    srcPos += toRead
-                    consumed += toRead
-
-                    while (true) {
-                        val n = inflater.inflate(outputBuf)
-                        if (n > 0) {
-                            fos.write(outputBuf, 0, n)
-                            if (compressedSize > 0) onProgress(consumed.toFloat() / compressedSize)
-                            continue
-                        }
-                        break
+            var produced = 0L
+            java.io.FileOutputStream(outFile).use { stream ->
+                while (!inflater.finished()) {
+                    currentCoroutineContext().ensureActive()
+                    if (inflater.needsInput()) {
+                        if (consumed == compressedSize) throw IOException("Truncated ZIP DEFLATE stream")
+                        val count = minOf(input.size.toLong(), compressedSize - consumed).toInt()
+                        source.readFully(offset + consumed, input, 0, count)
+                        inflater.setInput(input, 0, count)
+                        consumed += count
+                    }
+                    val count = inflater.inflate(output)
+                    if (count > 0) {
+                        if (count > expectedSize - produced) throw IOException("ZIP entry exceeds advertised size")
+                        stream.write(output, 0, count)
+                        produced += count
+                        onProgress(if (expectedSize == 0L) 1f else produced.toFloat() / expectedSize)
+                    } else if (!inflater.finished() && !inflater.needsInput()) {
+                        throw IOException("Invalid ZIP DEFLATE stream")
                     }
                 }
-                // Flush anything the inflater still holds.
-                while (true) {
-                    val n = inflater.inflate(outputBuf)
-                    if (n > 0) fos.write(outputBuf, 0, n) else break
+                if (produced != expectedSize || consumed - inflater.remaining != compressedSize) {
+                    throw IOException("ZIP DEFLATE length mismatch")
                 }
+                stream.fd.sync()
             }
-            onProgress(1f)
         } finally {
             inflater.end()
         }

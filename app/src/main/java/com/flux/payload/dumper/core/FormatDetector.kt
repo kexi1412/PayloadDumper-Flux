@@ -33,6 +33,8 @@ data class ZipEntryInfo(
     val compressedSize: Long,
     val method: Int,          // 0=STORED, 8=DEFLATED
     val localHeaderOffset: Long,
+    val crc32: Long? = null,
+    val flags: Int = 0,
 )
 
 /**

@@ -32,8 +32,12 @@ object PayloadParser {
 
         val manifestSize = source.readFully(p, 8).beLong(); p += 8
         val signatureSize = source.readFully(p, 4).beInt(); p += 4
-        if (manifestSize <= 0 || manifestSize > Int.MAX_VALUE) {
-            throw IOException("Implausible manifest size: $manifestSize")
+        if (manifestSize <= 0 || manifestSize > 32L * 1024 * 1024) {
+            throw IOException("Implausible manifest size: $manifestSize (maximum 32 MiB)")
+        }
+        if (signatureSize < 0 || p > source.size || manifestSize > source.size - p ||
+            signatureSize.toLong() > source.size - p - manifestSize) {
+            throw IOException("Payload metadata/signature extends beyond the archive")
         }
 
         val manifestBytes = source.readFully(p, manifestSize.toInt()); p += manifestSize

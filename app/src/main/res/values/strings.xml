@@ -14,7 +14,7 @@
     <string name="source_local">Local file</string>
     <string name="source_network">Network link</string>
     <string name="action_browse">Browse</string>
-    <string name="input_hint_local">payload.bin / OTA package path</string>
+    <string name="input_hint_local">Select an OTA file with the system picker</string>
     <string name="input_hint_network">Paste OTA direct-link URL</string>
     <string name="action_parse">Parse</string>
     <string name="action_parsing">Parsing…</string>
@@ -60,15 +60,15 @@
 
     <!-- About dialog -->
     <string name="about_version_author">Version %1$s · by %2$s</string>
-    <string name="about_description">Extract partition images in parallel from a full Android A/B (payload.bin) OTA.\nSupports local files and OTA direct links, concurrent multi-partition extraction, resumable network downloads, and SHA-256 verification after extraction.\nUI follows the ColorOS 17 card-list design.</string>
+    <string name="about_description">Extract images from full A/B OTA payloads, firmware ZIPs and Honor/Huawei update packages. Local document access, HTTP Range downloads, parallel extraction, resume and SHA-256 verification.</string>
     <string name="about_link_title">Project home</string>
     <string name="credits_title">Credits</string>
-    <string name="credits_body">· xyiguanle — payload analysis source\n· rcmiku/Payload-Dumper-Compose — predecessor project\n· payload-dumper-c — engine reference</string>
+    <string name="credits_body">· YuKongA (yukong) / Updater-KMP — OTA metadata and kernel inspection reference\n· xyiguanle — payload analysis source\n· rcmiku/Payload-Dumper-Compose — predecessor\n· payload-dumper-c — engine reference</string>
     <string name="action_ok">OK</string>
 
     <!-- Relink dialog -->
     <string name="relink_title">Link expired</string>
-    <string name="relink_body">Download of partition “%1$s” was interrupted; progress is saved. Paste a new OTA direct link to resume.\nOn submit, it is first verified by SHA-256 to confirm it is the same ROM — it only continues on a match, preventing a mismatched package.</string>
+    <string name="relink_body">Download of partition “%1$s” was interrupted; progress is saved. Paste a new OTA direct link to resume.\nOn submit, the whole manifest and operation layout must match before progress is reused.</string>
     <string name="relink_input_label">New OTA direct-link URL</string>
     <string name="relink_confirm">Verify &amp; resume</string>
     <string name="action_cancel">Cancel</string>
@@ -79,17 +79,40 @@
     <string name="permission_confirm">Grant permission</string>
 
     <!-- Messages (snackbar / status) -->
-    <string name="msg_input_required">Enter a local path or a link</string>
+    <string name="msg_input_required">Select a local file or enter a network link</string>
     <string name="err_file_unreadable">File not found or unreadable: %1$s</string>
     <string name="msg_extract_verify_failed">%1$s extracted, but verification failed</string>
     <string name="msg_link_stalled">Link expired or network interrupted; submit a new link to resume</string>
     <string name="msg_invalid_http">Enter a valid http(s) link</string>
     <string name="err_partition_missing">Partition %1$s not found in the new link</string>
-    <string name="err_different_rom">The new link is a different ROM (SHA-256 of partition %1$s differs); blocked to avoid mixing packages</string>
+    <string name="err_different_rom">The new link has a different manifest or operation layout for %1$s; existing progress cannot be reused</string>
     <string name="msg_resume_same_rom">Verified as the same ROM; resuming %1$s</string>
     <string name="msg_relink_failed">Failed to switch link</string>
     <string name="msg_cancelled_progress_kept">Cancelled (incomplete; progress saved, you can resume)</string>
     <string name="msg_all_done">All extractions complete</string>
     <string name="msg_nested_extracted">Extracted %1$d image(s) from the nested archive</string>
     <string name="msg_nested_partial">Extracted %1$d image(s), %2$d failed</string>
+
+    <!-- 3.0: document picker, firmware information, COUI17 -->
+    <string name="select_file_title">Select an OTA file</string>
+    <string name="select_file_hint">payload.bin · OTA ZIP · UPDATE.APP\nTap to open the system file picker</string>
+    <string name="selected_document">Selected document</string>
+    <string name="file_size_pending">Size will be read when parsing</string>
+    <string name="change_file">Choose another file</string>
+    <string name="source_locked">A task is running. The source is temporarily locked.</string>
+    <string name="summary_file_name">File name</string>
+    <string name="summary_android_version">Android version</string>
+    <string name="summary_kernel_version">Kernel version</string>
+    <string name="summary_fingerprint">Build fingerprint</string>
+    <string name="summary_block_size">Block size</string>
+    <string name="metadata_unknown">Not provided / unreadable</string>
+    <string name="metadata_source_hint">Values come from the selected firmware, not this device. Unsupported or absent values stay unknown. Tap a value to view and copy the full text.</string>
+    <string name="copy_and_close">Copy and close</string>
+    <string name="search_empty">No matching partitions</string>
+    <string name="state_opening">Opening archive…</string>
+    <string name="state_reading_archive">Reading %1$s…</string>
+    <string name="msg_extract_partial">Extraction finished with %1$d failed image(s)</string>
+    <string name="about_whats_new_title">New in 3.0</string>
+    <string name="about_whats_new_body">• Picker-only local files; local and network sources are remembered separately.\n• Android version, security patch, kernel version, build fingerprint, file name and size from the firmware.\n• COUI17 resource-based colors, cards, typography, segmented controls and dialogs.\n• Expand and copy full information; lazy partition list and safer source switching.\n• Fixed HTTP Range validation, encoded filenames and nested image output collisions.</string>
+    <string name="credits_updater_title">YuKongA / Updater-KMP · firmware information reference</string>
 </resources>

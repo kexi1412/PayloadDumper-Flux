@@ -11,7 +11,10 @@ object Preferences {
     }
 
     // Keys
-    const val KEY_PATH_OR_URL = "path_or_url"
+    const val KEY_PATH_OR_URL = "path_or_url" // legacy migration only
+    const val KEY_SOURCE_MODE = "source_mode"
+    const val KEY_LOCAL_URI = "local_uri"
+    const val KEY_NETWORK_URL = "network_url"
     const val KEY_OUTPUT_FOLDER = "output_folder"
     const val KEY_CUSTOM_UA_ENABLED = "custom_ua_enabled"
     const val KEY_CUSTOM_UA = "custom_ua"

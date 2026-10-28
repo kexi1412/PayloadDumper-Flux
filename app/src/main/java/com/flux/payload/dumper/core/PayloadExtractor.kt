@@ -4,37 +4,40 @@ import chromeos_update_engine.UpdateMetadata.InstallOperation
 import chromeos_update_engine.UpdateMetadata.PartitionUpdate
 import com.flux.payload.dumper.model.Payload
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
+import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
+import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.security.MessageDigest
+import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
-/**
- * Extracts partitions from a payload with genuine parallelism.
- *
- * Contrast with the old Compose implementation, whose global `Mutex` serialised every operation
- * and whose singleton HTTP cursor made concurrency impossible. Here each operation is an
- * independent task: it reads its blob at an absolute offset (safe concurrent reads via
- * [PayloadSource]) and writes the result at absolute file positions (safe concurrent writes via
- * [FileChannel]). Up to [workers] operations run at once. This mirrors the thread-pool model of
- * payload-dumper-c, including scattering decompressed data across every `dst_extent`.
- */
+/** Full-OTA extraction with a validated, non-overlapping positional write plan. */
 class PayloadExtractor(private val workers: Int = defaultWorkers()) {
+    init { require(workers > 0) }
 
-    data class Result(
-        val outputFile: File,
-        /** null = not requested/possible, true = hash matched, false = mismatch. */
-        val verified: Boolean?,
+    data class Result(val outputFile: File, val verified: Boolean?)
+    private data class Range(val position: Long, val length: Long)
+    private data class OperationPlan(
+        val operation: InstallOperation,
+        val ranges: List<Range>,
+        val decodedSize: Long,
+        val blobPosition: Long,
+        val blobLength: Int,
     )
+    private data class Plan(val operations: List<OperationPlan>, val targetSize: Long, val totalBytes: Long)
 
     suspend fun extractPartition(
         payload: Payload,
@@ -45,144 +48,259 @@ class PayloadExtractor(private val workers: Int = defaultWorkers()) {
         resume: ResumeState,
         onProgress: (Float) -> Unit,
     ): Result = withContext(Dispatchers.IO) {
-        if (!outputDir.exists()) outputDir.mkdirs()
-        val outFile = File(outputDir, "${partition.partitionName}.img")
-        val blockSize = payload.blockSize.toLong()
-        val ops = partition.operationsList
-
-        val allocSize = ops.asSequence()
-            .flatMap { it.dstExtentsList.asSequence() }
-            .maxOfOrNull { (it.startBlock + it.numBlocks) * blockSize } ?: 0L
-        val totalForProgress = allocSize.coerceAtLeast(1L)
-
-        // Bytes already written by a previous (interrupted) attempt — seeds the progress bar.
-        val initialDone = ops.withIndex()
-            .filter { resume.isDone(it.index) }
-            .sumOf { opBytes(it.value, blockSize) }
+        // Validate EVERY operation before reading a blob, creating an image or trusting indices.
+        val plan = runInterruptible { validatePlan(payload, source, partition) }
+        resume.requireIdentity(payloadResumeIdentity(payload, partition.partitionName), partition.operationsCount)
+        if (!outputDir.isDirectory && !outputDir.mkdirs()) throw IOException("Cannot create output directory")
+        val outFile = OutputPaths.child(outputDir, "${partition.partitionName}.img")
+        runInterruptible { resume.load(outFile, plan.targetSize) }
 
         RandomAccessFile(outFile, "rw").use { raf ->
-            if (raf.length() != allocSize) raf.setLength(allocSize) // keep partial data on resume
+            runInterruptible {
+                // A fresh/mismatched resume must not retain old firmware bytes in uncovered holes.
+                if (raf.length() != plan.targetSize) resume.clear()
+                if (resume.completedIndices().isEmpty()) raf.setLength(0)
+                raf.setLength(plan.targetSize)
+            }
             val channel = raf.channel
+            val initialDone = plan.operations.withIndex().filter { resume.isDone(it.index) }
+                .sumOf { it.value.decodedSize }
             val done = AtomicLong(initialDone)
-            val sem = Semaphore(workers)
-            onProgress((initialDone.toFloat() / totalForProgress).coerceIn(0f, 1f))
+            val next = AtomicInteger(0)
+            fun progress(bytes: Long) = (bytes.toDouble() / plan.totalBytes.coerceAtLeast(1L))
+                .toFloat().coerceIn(0f, 0.99f)
+            onProgress(progress(initialDone))
 
+            // A bounded number of workers, not one coroutine/large allocation per manifest op.
             coroutineScope {
-                ops.mapIndexed { index, op ->
-                    async {
-                        if (resume.isDone(index)) return@async
-                        sem.withPermit {
-                            val bytes = processOperation(payload, source, partition.partitionName, op, channel, blockSize)
-                            resume.mark(index)
-                            val soFar = done.addAndGet(bytes)
-                            onProgress((soFar.toFloat() / totalForProgress).coerceIn(0f, 1f))
+                List(minOf(workers, plan.operations.size)) {
+                    launch {
+                        while (true) {
+                            ensureActive()
+                            val index = next.getAndIncrement()
+                            if (index >= plan.operations.size) break
+                            if (resume.isDone(index)) continue
+                            val bytes = runInterruptible {
+                                val written = processOperation(source, plan.operations[index], channel)
+                                checkInterrupted()
+                                // One image force per mark (plus final force), intentionally not free.
+                                channel.force(true)
+                                resume.mark(index)
+                                written
+                            }
+                            ensureActive()
+                            onProgress(progress(done.addAndGet(bytes)))
                         }
                     }
-                }.awaitAll()
+                }.joinAll()
             }
-            channel.force(true)
+            runInterruptible {
+                channel.force(true)
+                if (channel.size() != plan.targetSize) throw IOException("Output image length changed during extraction")
+            }
         }
 
-        // Reaching here means every op finished — verify, then drop the resume sidecar.
-        val verified = if (verify && partition.hasNewPartitionInfo() && partition.newPartitionInfo.hash.size() > 0) {
-            verifySha256(outFile, partition.newPartitionInfo.size, partition.newPartitionInfo.hash.toByteArray())
+        val hash = if (partition.hasNewPartitionInfo()) partition.newPartitionInfo.hash.toByteArray() else byteArrayOf()
+        val verified = if (verify && hash.isNotEmpty()) {
+            runInterruptible { verifySha256(outFile, plan.targetSize, hash) }
         } else null
-
-        resume.clear()
-        onProgress(1f)
+        // Hash mismatch returns false, but clears all completed indices so a retry rewrites data.
+        runInterruptible { resume.clear() }
+        if (verified != false) onProgress(1f)
         Result(outFile, verified)
     }
 
-    private fun opBytes(op: InstallOperation, blockSize: Long): Long =
-        op.dstExtentsList.sumOf { it.numBlocks } * blockSize
+    private fun validatePlan(payload: Payload, source: PayloadSource, partition: PartitionUpdate): Plan {
+        val name = partition.partitionName
+        if (!PARTITION_NAME.matches(name)) throw IOException("Invalid partition name: '$name'")
+        if (payload.blockSize <= 0) throw IOException("Invalid payload block size")
+        val blockSize = payload.blockSize.toLong()
+        if (payload.manifest.blockSize != payload.blockSize) throw IOException("Payload block size does not match manifest")
+        val matching = payload.manifest.partitionsList.filter { it.partitionName == name }
+        if (matching.size != 1 || matching.single() != partition) throw IOException("Partition does not match payload manifest")
+        if (partition.operationsCount > ResumeState.MAX_OPERATIONS) throw IOException("Too many partition operations")
+        if (payload.manifest.minorVersion != 0) throw IOException("Partition '$name' needs incremental (delta) data; only full OTA packages are supported")
+        if (source.size < 0 || payload.dataOffset < 0 || payload.dataOffset > source.size) throw IOException("Invalid payload data boundary")
 
-    private fun processOperation(
-        payload: Payload,
-        source: PayloadSource,
-        partitionName: String,
-        op: InstallOperation,
-        channel: FileChannel,
-        blockSize: Long,
-    ): Long {
-        // ZERO / DISCARD carry no data — just clear the destination blocks.
-        if (op.type == InstallOperation.Type.ZERO || op.type == InstallOperation.Type.DISCARD) {
-            var total = 0L
-            for (ext in op.dstExtentsList) {
-                val len = ext.numBlocks * blockSize
-                writeZeros(channel, ext.startBlock * blockSize, len)
-                total += len
+        // Reject delta ops across the WHOLE plan before any blob is read (even earlier REPLACEs).
+        for (op in partition.operationsList) {
+            checkInterrupted()
+            if (!op.hasType()) throw IOException("Missing or unknown operation type")
+            when (op.type) {
+                InstallOperation.Type.SOURCE_COPY, InstallOperation.Type.SOURCE_BSDIFF,
+                InstallOperation.Type.BROTLI_BSDIFF, InstallOperation.Type.PUFFDIFF,
+                InstallOperation.Type.ZUCCHINI, InstallOperation.Type.LZ4DIFF_BSDIFF,
+                InstallOperation.Type.LZ4DIFF_PUFFDIFF, InstallOperation.Type.BSDIFF,
+                InstallOperation.Type.MOVE -> throw IOException("Partition '$name' needs incremental (delta) op ${op.type}; only full OTA packages are supported")
+                else -> Unit
             }
-            return total
+            if (op.srcExtentsCount != 0) throw IOException("Full OTA operation unexpectedly references source extents")
         }
 
-        val expected = (op.dstExtentsList.sumOf { it.numBlocks } * blockSize)
-        val blob = source.readFully(payload.dataOffset + op.dataOffset, op.dataLength.toInt())
-
-        val decoded: ByteArray = when (op.type) {
-            InstallOperation.Type.REPLACE -> Decompressor.replace(blob)
-            InstallOperation.Type.REPLACE_BZ -> Decompressor.bz2(blob)
-            InstallOperation.Type.REPLACE_XZ -> Decompressor.xz(blob)
-            InstallOperation.Type.SOURCE_COPY,
-            InstallOperation.Type.SOURCE_BSDIFF,
-            InstallOperation.Type.BROTLI_BSDIFF,
-            InstallOperation.Type.PUFFDIFF,
-            InstallOperation.Type.ZUCCHINI,
-            InstallOperation.Type.LZ4DIFF_BSDIFF,
-            InstallOperation.Type.LZ4DIFF_PUFFDIFF,
-            InstallOperation.Type.BSDIFF,
-            InstallOperation.Type.MOVE ->
-                throw IOException("Partition '$partitionName' needs incremental (delta) op ${op.type}; only full OTA packages are supported")
-            else -> Decompressor.sniffAndDecode(blob, expected.toInt())
+        var allocSize = 0L
+        var totalBytes = 0L
+        val allRanges = ArrayList<Range>()
+        val operations = partition.operationsList.map { op ->
+            checkInterrupted()
+            if (op.dstExtentsCount == 0) throw IOException("Operation has no destination extents")
+            var decodedSize = 0L
+            val ranges = op.dstExtentsList.map { ext ->
+                if (!ext.hasStartBlock() || !ext.hasNumBlocks() || ext.startBlock < 0 || ext.numBlocks <= 0) {
+                    throw IOException("Invalid destination extent")
+                }
+                val position = multiply(ext.startBlock, blockSize, "extent position")
+                val length = multiply(ext.numBlocks, blockSize, "extent length")
+                val end = add(position, length, "extent end")
+                allocSize = maxOf(allocSize, end)
+                decodedSize = add(decodedSize, length, "decoded length")
+                Range(position, length).also { allRanges.add(it) }
+            }
+            totalBytes = add(totalBytes, decodedSize, "total output length")
+            if (op.hasDstLength() && op.dstLength != decodedSize) throw IOException("Destination length does not match extents")
+            if (op.dataOffset < 0 || op.dataLength < 0 || op.dataLength > MAX_OPERATION_BYTES) throw IOException("Operation blob exceeds 128 MiB or is invalid")
+            val blobPosition = add(payload.dataOffset, op.dataOffset, "blob offset")
+            val blobEnd = add(blobPosition, op.dataLength, "blob end")
+            if (blobPosition > source.size || blobEnd > source.size) throw IOException("Operation blob extends beyond source")
+            if (op.dataSha256Hash.size() != 0 && op.dataSha256Hash.size() != 32) throw IOException("Invalid operation SHA-256 length")
+            val noBlob = op.type == InstallOperation.Type.ZERO || op.type == InstallOperation.Type.DISCARD
+            if (noBlob) {
+                if (op.dataLength != 0L) throw IOException("ZERO/DISCARD operation must not carry a blob")
+                if (!op.dataSha256Hash.isEmpty && !MessageDigest.getInstance("SHA-256").digest(byteArrayOf())
+                        .contentEquals(op.dataSha256Hash.toByteArray())) throw IOException("Empty operation blob SHA-256 mismatch")
+            } else {
+                if (decodedSize > MAX_OPERATION_BYTES) throw IOException("Operation decoded length exceeds 128 MiB")
+                if (op.type == InstallOperation.Type.REPLACE && op.dataLength != decodedSize) throw IOException("REPLACE length does not match destination extents")
+            }
+            OperationPlan(op, ranges, decodedSize, blobPosition, op.dataLength.toInt())
         }
-
-        // Scatter the decoded bytes across every destination extent, in order.
-        var srcPos = 0
-        var total = 0L
-        for (ext in op.dstExtentsList) {
-            if (srcPos >= decoded.size) break
-            val len = minOf((ext.numBlocks * blockSize).toInt(), decoded.size - srcPos)
-            writeAt(channel, ext.startBlock * blockSize, decoded, srcPos, len)
-            srcPos += len
-            total += len
+        val targetSize = if (partition.hasNewPartitionInfo() && partition.newPartitionInfo.hasSize()) {
+            partition.newPartitionInfo.size
+        } else allocSize
+        if (targetSize < 0 || allocSize > targetSize) throw IOException("Destination extents exceed new partition size")
+        val hashSize = if (partition.hasNewPartitionInfo()) partition.newPartitionInfo.hash.size() else 0
+        if (hashSize != 0 && hashSize != 32) throw IOException("Invalid partition SHA-256 length")
+        // Overlapping writes would be order-dependent and invalidate parallel/resumed extraction.
+        var previousEnd = 0L
+        for (range in allRanges.sortedBy { it.position }) {
+            checkInterrupted()
+            if (range.position < previousEnd) throw IOException("Overlapping destination extents")
+            previousEnd = add(range.position, range.length, "extent end")
         }
-        return total
+        return Plan(operations, targetSize, totalBytes)
+    }
+
+    private fun processOperation(source: PayloadSource, plan: OperationPlan, channel: FileChannel): Long {
+        checkInterrupted()
+        val op = plan.operation
+        if (op.type == InstallOperation.Type.ZERO || op.type == InstallOperation.Type.DISCARD) {
+            for (range in plan.ranges) writeZeros(channel, range.position, range.length)
+            return plan.decodedSize
+        }
+        val blob = source.readFully(plan.blobPosition, plan.blobLength)
+        checkInterrupted()
+        if (blob.size != plan.blobLength) throw IOException("Short operation blob read")
+        if (!op.dataSha256Hash.isEmpty && !MessageDigest.getInstance("SHA-256").digest(blob)
+                .contentEquals(op.dataSha256Hash.toByteArray())) throw IOException("Operation blob SHA-256 mismatch")
+        val expected = plan.decodedSize.toInt()
+        val decoded = when (op.type) {
+            InstallOperation.Type.REPLACE -> blob
+            InstallOperation.Type.REPLACE_BZ -> decodeBounded(BZip2CompressorInputStream(ByteArrayInputStream(blob), true), expected)
+            InstallOperation.Type.REPLACE_XZ -> decodeBounded(XZCompressorInputStream(ByteArrayInputStream(blob), true, 128 * 1024), expected)
+            else -> when {
+                blob.startsWith(ZSTD_MAGIC) -> Decompressor.zstd(blob, expected)
+                blob.startsWith(XZ_MAGIC) -> decodeBounded(XZCompressorInputStream(ByteArrayInputStream(blob), true, 128 * 1024), expected)
+                blob.startsWith(BZ2_MAGIC) -> decodeBounded(BZip2CompressorInputStream(ByteArrayInputStream(blob), true), expected)
+                else -> throw IOException("Unsupported operation ${op.type}: no recognized compression magic")
+            }
+        }
+        if (decoded.size != expected) throw IOException("Decoded length ${decoded.size} does not match destination length $expected")
+        // Only scatter a fully decoded, length-checked and hash-checked operation.
+        var offset = 0
+        for (range in plan.ranges) {
+            writeAt(channel, range.position, decoded, offset, range.length.toInt())
+            offset += range.length.toInt()
+        }
+        return plan.decodedSize
+    }
+
+    private fun decodeBounded(input: InputStream, expected: Int): ByteArray = input.use {
+        val decoded = ByteArray(expected)
+        var offset = 0
+        while (offset < expected) {
+            checkInterrupted()
+            val n = it.read(decoded, offset, minOf(IO_CHUNK, expected - offset))
+            if (n <= 0) throw IOException("Compressed operation ended before expected decoded length")
+            offset += n
+        }
+        checkInterrupted()
+        if (it.read() != -1) throw IOException("Compressed operation exceeds expected decoded length")
+        decoded
     }
 
     private fun writeAt(channel: FileChannel, position: Long, data: ByteArray, offset: Int, len: Int) {
-        val bb = ByteBuffer.wrap(data, offset, len)
+        val buffer = ByteBuffer.wrap(data, offset, len)
         var pos = position
-        while (bb.hasRemaining()) pos += channel.write(bb, pos)
+        while (buffer.hasRemaining()) {
+            checkInterrupted()
+            val n = channel.write(buffer, pos)
+            if (n <= 0) throw IOException("Output write made no progress")
+            pos += n
+        }
     }
 
     private fun writeZeros(channel: FileChannel, position: Long, length: Long) {
-        val chunk = ByteArray(minOf(length, ZERO_CHUNK).toInt())
+        val chunk = ByteArray(minOf(length, IO_CHUNK.toLong()).toInt())
         var remaining = length
         var pos = position
         while (remaining > 0) {
+            checkInterrupted()
             val n = minOf(remaining, chunk.size.toLong()).toInt()
-            val bb = ByteBuffer.wrap(chunk, 0, n)
-            while (bb.hasRemaining()) pos += channel.write(bb, pos)
+            writeAt(channel, pos, chunk, 0, n)
             remaining -= n
+            pos += n
         }
     }
 
     private fun verifySha256(file: File, size: Long, expected: ByteArray): Boolean {
+        if (size < 0 || file.length() != size) throw IOException("Output length does not exactly match verification size")
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().use { input ->
-            val buf = ByteArray(1 shl 16)
+            val buffer = ByteArray(IO_CHUNK)
             var remaining = size
             while (remaining > 0) {
-                val n = input.read(buf, 0, minOf(remaining, buf.size.toLong()).toInt())
-                if (n < 0) break
-                digest.update(buf, 0, n)
+                checkInterrupted()
+                val n = input.read(buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
+                if (n <= 0) throw IOException("Output truncated during SHA-256 verification")
+                digest.update(buffer, 0, n)
                 remaining -= n
             }
+            checkInterrupted()
+            if (input.read() != -1) throw IOException("Output grew during SHA-256 verification")
         }
+        if (file.length() != size) throw IOException("Output length changed during SHA-256 verification")
         return digest.digest().contentEquals(expected)
     }
 
+    private fun add(a: Long, b: Long, label: String): Long {
+        if (a < 0 || b < 0 || a > Long.MAX_VALUE - b) throw IOException("Invalid or overflowing $label")
+        return a + b
+    }
+    private fun multiply(a: Long, b: Long, label: String): Long {
+        if (a < 0 || b <= 0 || a > Long.MAX_VALUE / b) throw IOException("Invalid or overflowing $label")
+        return a * b
+    }
+    private fun checkInterrupted() {
+        if (Thread.currentThread().isInterrupted) throw CancellationException("Extraction interrupted")
+    }
+    private fun ByteArray.startsWith(prefix: ByteArray): Boolean = size >= prefix.size && prefix.indices.all { this[it] == prefix[it] }
+
     companion object {
-        private const val ZERO_CHUNK = 1L shl 20
+        private const val MAX_OPERATION_BYTES = 128L * 1024 * 1024
+        private const val IO_CHUNK = 1 shl 16
+        private val PARTITION_NAME = Regex("[A-Za-z0-9_-]+")
+        private val XZ_MAGIC = byteArrayOf(0xFD.toByte(), 0x37, 0x7A, 0x58, 0x5A, 0)
+        private val BZ2_MAGIC = byteArrayOf(0x42, 0x5A, 0x68)
+        private val ZSTD_MAGIC = byteArrayOf(0x28, 0xB5.toByte(), 0x2F, 0xFD.toByte())
         fun defaultWorkers(): Int = Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
     }
 }

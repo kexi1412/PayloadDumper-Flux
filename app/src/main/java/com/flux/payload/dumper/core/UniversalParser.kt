@@ -8,15 +8,17 @@ import java.io.IOException
  * Result of parsing any supported archive format.
  */
 sealed interface ParseResult {
+    val archiveInfo: ArchiveInfo
 
     /** Google A/B OTA with a parseable CrAU payload. */
     data class CrAU(
         val payload: com.flux.payload.dumper.model.Payload,
+        override val archiveInfo: ArchiveInfo,
     ) : ParseResult
 
     /** A set of directly extractable file entries (Honor/Huawei/ZIP/block OTA containers). */
     data class RawEntries(
-        val archiveInfo: ArchiveInfo,
+        override val archiveInfo: ArchiveInfo,
         val entries: List<RawEntry>,
     ) : ParseResult
 
@@ -97,8 +99,17 @@ object UniversalParser {
         onProgress: ((String) -> Unit)? = null,
         onPartial: ((List<ParseResult.RawEntry>) -> Unit)? = null,
     ): ParseResult {
-        return when (val format = FormatDetector.detect(source)) {
-            is ArchiveFormat.CrAUPayload -> ParseResult.CrAU(PayloadParser.parse(source))
+        val parsed = when (val format = FormatDetector.detect(source)) {
+            is ArchiveFormat.CrAUPayload -> {
+                val payload = PayloadParser.parse(source)
+                ParseResult.CrAU(payload, ArchiveInfo(
+                    fileName = source.fileName(),
+                    fileSize = source.size,
+                    securityPatchLevel = "",
+                    partitionCount = payload.manifest.partitionsCount,
+                    blockSize = payload.blockSize,
+                ))
+            }
 
             is ArchiveFormat.UpdateApp -> parseRawUpdateApp(source)
 
@@ -109,6 +120,12 @@ object UniversalParser {
             is ArchiveFormat.Unknown -> throw java.io.IOException(
                 "Unrecognised archive — expected payload.bin (CrAU), an OTA ZIP, UPDATE.APP, or a Honor/Huawei SD update package"
             )
+        }
+        onProgress?.invoke("Reading firmware metadata…")
+        val metadata = FirmwareMetadataReader.read(source, parsed.archiveInfo, (parsed as? ParseResult.CrAU)?.payload)
+        return when (parsed) {
+            is ParseResult.CrAU -> parsed.copy(archiveInfo = metadata)
+            is ParseResult.RawEntries -> parsed.copy(archiveInfo = metadata)
         }
     }
 

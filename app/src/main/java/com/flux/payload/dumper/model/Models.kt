@@ -58,4 +58,8 @@ data class ArchiveInfo(
     val securityPatchLevel: String,
     val partitionCount: Int,
     val blockSize: Int,
+    /** Values describe the selected firmware, never the device running this application. */
+    val androidVersion: String = "",
+    val kernelVersion: String = "",
+    val fingerprint: String = "",
 )

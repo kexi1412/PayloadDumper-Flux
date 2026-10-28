@@ -38,7 +38,7 @@ import com.flux.payload.dumper.ui.theme.FluxRadius
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
 
 /**
- * COUI 17 分区列表行——精确模仿 coui_preference.xml 的布局结构。
+ * COUI17-inspired partition row, adapted for two-line status and a 48dp action target.
  *
  * 从 AXML 提取的真实参数：
  *   paddingStart = 32dp, paddingEnd = 32dp
@@ -50,7 +50,7 @@ import com.flux.payload.dumper.ui.theme.LocalFluxColors
  * 行间分割线从 72dp 开始（= paddingStart 32dp + icon 40dp），与图标右边缘对齐。
  */
 @Composable
-fun PartitionRow(info: PartitionInfo, onExtract: () -> Unit) {
+fun PartitionRow(info: PartitionInfo, onExtract: () -> Unit, enabled: Boolean = true) {
     val flux = LocalFluxColors.current
     val running = info.extractState == ExtractState.RUNNING
     val progress by animateFloatAsState(info.progress, label = "rowProgress")
@@ -67,7 +67,7 @@ fun PartitionRow(info: PartitionInfo, onExtract: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 56.dp)
-            .padding(start = 32.dp, end = 32.dp, top = 12.dp, bottom = 12.dp),
+            .padding(start = 24.dp, end = 24.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         LeadingIconBox(info, progress, ringColor)
@@ -100,7 +100,7 @@ fun PartitionRow(info: PartitionInfo, onExtract: () -> Unit) {
                 else -> stringResource(R.string.action_extract)
             }
             Spacer(Modifier.width(12.dp))
-            TonalButton(text = label, onClick = onExtract)
+            TonalButton(text = label, onClick = onExtract, enabled = enabled)
         }
     }
 }

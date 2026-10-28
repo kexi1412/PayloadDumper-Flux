@@ -1,16 +1,16 @@
 package com.flux.payload.dumper.ui.components
 
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -21,14 +21,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.flux.payload.dumper.ui.theme.FluxRadius
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
 
 /**
- * COUI 17 主按钮——实心强调填充（COUIButton）。解析 / 对话框确认的 CTA。
- * 圆角增大到 16dp，高度保持 50dp。
+ * COUI large-button colors/radius/text size. Native minimum height is 44dp;
+ * Flux raises it to a content-led 48dp minimum, preserving font scaling.
+ * The subtle press scale is an application animation, not a measured OEM curve.
  */
 @Composable
 fun AccentButton(
@@ -40,35 +43,42 @@ fun AccentButton(
     val flux = LocalFluxColors.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (pressed && enabled) 0.97f else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
-        label = "press",
+    val scale by animateFloatAsState(if (pressed && enabled) 0.98f else 1f, label = "buttonPress")
+    val background by animateColorAsState(
+        when {
+            !enabled -> flux.buttonDisabled
+            pressed -> flux.pressMask.compositeOver(flux.accent)
+            else -> flux.accent
+        },
+        label = "buttonColor",
     )
-    val bg = if (enabled) flux.accent else flux.fieldBg
     Box(
         modifier = modifier
             .scale(scale)
             .fillMaxWidth()
-            .height(50.dp)
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(FluxRadius.Button))
-            .background(bg)
-            .clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = onClick),
+            .background(background)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                enabled = enabled,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(horizontal = 20.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelLarge,
-            color = if (enabled) flux.onAccent else flux.labelTertiary,
+            color = if (enabled) flux.onAccent else flux.buttonOnDisabled,
             textAlign = TextAlign.Center,
         )
     }
 }
 
-/**
- * 紧凑着色按钮，用于列表行操作如"提取"（COUI borderless / tint button）。
- * COUI 17 圆角增大到 12dp。
- */
+/** Tonal small-button palette/radius with an expanded, font-scale-safe touch target. */
 @Composable
 fun TonalButton(
     text: String,
@@ -79,25 +89,42 @@ fun TonalButton(
     val flux = LocalFluxColors.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.94f else 1f, label = "pill")
+    val scale by animateFloatAsState(if (pressed && enabled) 0.98f else 1f, label = "tonalPress")
+    val background by animateColorAsState(
+        when {
+            !enabled -> flux.fieldBg
+            pressed -> flux.pressMask.compositeOver(flux.accentContainer)
+            else -> flux.accentContainer
+        },
+        label = "tonalColor",
+    )
     Box(
         modifier = modifier
             .scale(scale)
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (enabled) flux.accentContainer else flux.fieldBg)
-            .clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 9.dp),
+            .heightIn(min = 48.dp)
+            .widthIn(min = 52.dp)
+            .clip(RoundedCornerShape(FluxRadius.SmallButton))
+            .background(background)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                enabled = enabled,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = text,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelMedium,
             color = if (enabled) flux.accent else flux.labelTertiary,
+            textAlign = TextAlign.Center,
         )
     }
 }
 
-/** 人类可读的字节大小，匹配参考 app 的四舍五入。 */
+/** Human-readable byte size; keep the application's existing display convention. */
 fun formatSize(bytes: Long): String = when {
     bytes < 1000 -> "$bytes B"
     bytes < 1000L * 1000 -> "%d KB".format(bytes / 1024)

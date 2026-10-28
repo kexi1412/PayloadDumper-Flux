@@ -8,9 +8,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,55 +28,92 @@ jobs:
 
       - name: Set up Android SDK
         run: |
-          # The runner already ships a full Android SDK with cmdline-tools,
-          # build-tools and platform-tools. The setup-android action installs
-          # the deprecated standalone "tools" package which Google removed from
-          # the repository on 2026-10-15 ("Failed to find package 'tools'"),
-          # so we accept licenses directly and skip the action.
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x ./gradlew
-
-      - name: Build release (unsigned)
-        run: ./gradlew assembleRelease --no-daemon --stacktrace
-
-      - name: Generate signing keystore
+      - name: Read application version
+        id: version
         run: |
-          keytool -genkeypair -v -keystore release.jks \
-            -storepass android -keypass android -alias flux \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Payload Dumper Flux, OU=Flux, O=Flux, L=City, S=State, C=CN"
+          VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts)
+          test -n "$VERSION"
+          echo "name=$VERSION" >> "$GITHUB_OUTPUT"
+          chmod +x ./gradlew
 
-      - name: Zipalign and sign
+      - name: Test, lint and build
+        run: ./gradlew testDebugUnitTest lintDebug assembleDebugAndroidTest assembleRelease --no-daemon --stacktrace
+
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PayloadDumper-Flux-test-reports
+          path: |
+            app/build/test-results/
+            app/build/reports/
+          if-no-files-found: warn
+
+      - name: Prepare signing keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.FLUX_SIGNING_KEYSTORE_B64 }}
+          SIGNING_PASSWORD: ${{ secrets.FLUX_SIGNING_PASSWORD }}
         run: |
           set -e
-          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
-          echo "Using build-tools: $BT"
-          UNSIGNED=app/build/outputs/apk/release/app-release-unsigned.apk
-          "$BT/zipalign" -p -f 4 "$UNSIGNED" app-release-aligned.apk
-          "$BT/apksigner" sign \
-            --ks release.jks --ks-pass pass:android --key-pass pass:android \
-            --out PayloadDumper-Flux-release.apk app-release-aligned.apk
-          "$BT/apksigner" verify --verbose PayloadDumper-Flux-release.apk
+          umask 077
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$SIGNING_PASSWORD" ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 --decode > release.p12
+            echo 'Using persistent release certificate'
+          elif [ -n "$KEYSTORE_B64" ] || [ -n "$SIGNING_PASSWORD" ]; then
+            echo 'Both FLUX_SIGNING_KEYSTORE_B64 and FLUX_SIGNING_PASSWORD must be configured' >&2
+            exit 1
+          else
+            # Forks without signing secrets still get a build, but not an upgrade-compatible key.
+            echo '::warning::No persistent signing secrets; generating an ephemeral certificate'
+            SIGNING_PASSWORD=$(openssl rand -hex 24)
+            echo "::add-mask::$SIGNING_PASSWORD"
+            keytool -genkeypair -keystore release.p12 -storetype PKCS12 \
+              -storepass:env SIGNING_PASSWORD -keypass:env SIGNING_PASSWORD -alias flux \
+              -keyalg RSA -keysize 3072 -validity 10000 \
+              -dname 'CN=Payload Dumper Flux, OU=Flux, O=Flux, C=CN'
+          fi
+          printf '%s' "$SIGNING_PASSWORD" > signing-password.txt
+        shell: bash
 
-      - name: Upload APK artifact
+      - name: Zipalign, sign and verify
+        run: |
+          set -e
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          "$BT/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
+          "$BT/apksigner" sign --ks release.p12 --ks-key-alias flux \
+            --ks-pass file:signing-password.txt --key-pass file:signing-password.txt \
+            --out "PayloadDumper-Flux-${{ steps.version.outputs.name }}.apk" aligned.apk
+          "$BT/apksigner" verify --verbose --print-certs "PayloadDumper-Flux-${{ steps.version.outputs.name }}.apk"
+          sha256sum PayloadDumper-Flux-*.apk > SHA256SUMS.txt
+
+      - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
           name: PayloadDumper-Flux-apk
-          path: PayloadDumper-Flux-release.apk
+          path: |
+            PayloadDumper-Flux-*.apk
+            SHA256SUMS.txt
           if-no-files-found: error
 
       - name: Publish GitHub Release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: Payload Dumper Flux build ${{ github.run_number }}
-          files: PayloadDumper-Flux-release.apk
+          tag_name: v${{ steps.version.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          name: Payload Dumper Flux ${{ steps.version.outputs.name }}
+          body_path: CHANGELOG.md
+          files: |
+            PayloadDumper-Flux-*.apk
+            SHA256SUMS.txt
           generate_release_notes: true
+
+      - name: Clean temporary signing files
+        if: always()
+        run: rm -f release.p12 signing-password.txt aligned.apk

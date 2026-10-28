@@ -15,11 +15,10 @@ android {
         applicationId = "com.flux.payload.dumper"
         minSdk = 30
         targetSdk = 35
-        // Bumped with every release so the installed build can be told apart.
-        // versionCode/versionName were pinned at 20 / "2.0" across build-20 and build-21,
-        // which made "which APK am I actually running?" unanswerable.
-        versionCode = 22
-        versionName = "2.2"
+        // COUI17 + firmware information release.
+        versionCode = 30
+        versionName = "3.0.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -92,5 +91,12 @@ dependencies {
     implementation(libs.xz)                 // org.tukaani xz backend
     implementation(libs.aircompressor)      // pure-java zstd decoder (no native libs)
 
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
     debugImplementation(libs.androidx.ui.tooling)
 }

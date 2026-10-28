@@ -11,7 +11,6 @@ import java.io.Closeable
 import java.io.EOFException
 import java.io.File
 import java.io.IOException
-import java.net.URI
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.StandardOpenOption
@@ -217,25 +216,35 @@ class HttpSource private constructor(
     override fun identity(): String = "http:$url:$size"
 
     override fun readFully(offset: Long, buffer: ByteArray, bufOffset: Int, len: Int) {
+        require(offset >= 0 && len >= 0 && offset <= size - len) { "Read outside remote archive" }
+        require(bufOffset >= 0 && bufOffset <= buffer.size - len) { "Read outside destination buffer" }
         if (len == 0) return
         val end = offset + len - 1
-        val req = Request.Builder().url(url).header("Range", "bytes=$offset-$end").build()
+        val req = Request.Builder().url(url)
+            .header("Range", "bytes=$offset-$end")
+            .header("Accept-Encoding", "identity")
+            .build()
         var attempt = 0
         while (true) {
             try {
                 client.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) throw IOException("HTTP ${resp.code} for range $offset-$end")
-                    val stream = resp.body?.byteStream() ?: throw IOException("Empty body")
+                    validateRange(resp, offset, end, size)
+                    val body = resp.body ?: throw IOException("Empty body")
+                    if (body.contentLength() >= 0 && body.contentLength() != len.toLong()) {
+                        throw IOException("HTTP range body length mismatch")
+                    }
+                    val stream = body.byteStream()
                     var read = 0
                     while (read < len) {
                         val n = stream.read(buffer, bufOffset + read, len - read)
-                        if (n < 0) throw EOFException("Short read: got $read of $len at $offset")
+                        if (n <= 0) throw EOFException("Short read: got $read of $len at $offset")
                         read += n
                     }
                 }
                 return
             } catch (e: IOException) {
-                if (++attempt >= MAX_RETRIES) throw e
+                // A protocol violation cannot be repaired by writing bytes from offset zero.
+                if (e is java.net.ProtocolException || ++attempt >= MAX_RETRIES) throw e
                 Thread.sleep(RETRY_DELAY_MS * attempt)
             }
         }
@@ -249,30 +258,31 @@ class HttpSource private constructor(
 
         /** Probe total size + filename with a 1-byte ranged request, then build the source. */
         fun open(url: String, client: OkHttpClient): HttpSource {
-            val req = Request.Builder().url(url).header("Range", "bytes=0-0").build()
+            val req = Request.Builder().url(url)
+                .header("Range", "bytes=0-0")
+                .header("Accept-Encoding", "identity")
+                .build()
             client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) throw IOException("Failed to open URL: HTTP ${resp.code}")
-                val contentRange = resp.header("Content-Range")
-                    ?: throw IOException("Server does not support range requests")
-                val total = contentRange.substringAfter('/', "").toLongOrNull()
-                    ?: throw IOException("Cannot determine remote file size")
-                val name = fileNameFromHeaders(resp.header("Content-Disposition"), url)
-                return HttpSource(url, client, total, name)
+                val range = validateRange(resp, 0, 0, null)
+                val name = HttpArchiveHeaders.fileName(resp.header("Content-Disposition"), resp.request.url.toString())
+                return HttpSource(resp.request.url.toString(), client, range.total, name)
             }
         }
 
-        private fun fileNameFromHeaders(disposition: String?, url: String): String {
-            if (!disposition.isNullOrEmpty()) {
-                disposition.split(";").forEach { part ->
-                    val t = part.trim()
-                    if (t.startsWith("filename=")) {
-                        return t.substringAfter('=').trim('"', ' ')
-                    }
-                }
+        private fun validateRange(resp: okhttp3.Response, first: Long, last: Long, total: Long?): HttpArchiveHeaders.ByteRange {
+            if (resp.code != 206) {
+                if (resp.code == 200) throw java.net.ProtocolException("Server ignored HTTP Range; refusing incorrect archive bytes")
+                throw IOException("HTTP ${resp.code} for range $first-$last")
             }
-            return runCatching {
-                URI(url).path.substringAfterLast('/').ifEmpty { "payload.bin" }
-            }.getOrDefault("payload.bin")
+            val range = HttpArchiveHeaders.contentRange(resp.header("Content-Range"))
+                ?: throw java.net.ProtocolException("Invalid or missing HTTP Content-Range")
+            if (range.first != first || range.last != last || (total != null && range.total != total)) {
+                throw java.net.ProtocolException("HTTP Content-Range does not match the requested archive bytes")
+            }
+            if (resp.header("Content-Encoding")?.let { !it.equals("identity", true) } == true) {
+                throw java.net.ProtocolException("Encoded HTTP range body is not random-access archive data")
+            }
+            return range
         }
     }
 }

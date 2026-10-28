@@ -8,7 +8,7 @@ import java.util.concurrent.TimeUnit
 /** Builds an OkHttpClient that injects the user's custom User-Agent and optional extra header. */
 object Net {
 
-    const val DEFAULT_USER_AGENT = "PayloadDumperFlux/2.0 (Android)"
+    val DEFAULT_USER_AGENT = "PayloadDumperFlux/${com.flux.payload.dumper.BuildConfig.VERSION_NAME} (Android)"
 
     fun buildClient(): OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)

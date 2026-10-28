@@ -215,6 +215,8 @@ object ZipScanner {
                     compressedSize = compSize,
                     method = method,
                     localHeaderOffset = localOffset,
+                    crc32 = intAt(bb, entryStart + 16),
+                    flags = shortAt(bb, entryStart + 8),
                 )
             )
             bb.position(nameStart + nameLen + extraLen + commentLen)

@@ -5,7 +5,6 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -17,12 +16,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.DropdownMenu
@@ -45,7 +43,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -63,22 +60,18 @@ import androidx.compose.ui.unit.sp
 import com.flux.payload.dumper.R
 import com.flux.payload.dumper.data.PathUtil
 import com.flux.payload.dumper.data.Preferences
-import com.flux.payload.dumper.model.ArchiveInfo
+import com.flux.payload.dumper.ui.components.SourceCard
+import com.flux.payload.dumper.ui.components.FirmwareInfoCard
 import com.flux.payload.dumper.ui.components.AboutDialog
-import com.flux.payload.dumper.ui.components.AccentButton
 import com.flux.payload.dumper.ui.components.CardGroup
 import com.flux.payload.dumper.ui.components.CategoryHeader
 import com.flux.payload.dumper.ui.components.ExtractFab
 import com.flux.payload.dumper.ui.components.FluxBackground
 import com.flux.payload.dumper.ui.components.IconBox
-import com.flux.payload.dumper.ui.components.InfoRow
 import com.flux.payload.dumper.ui.components.PartitionRow
 import com.flux.payload.dumper.ui.components.PermissionDialog
 import com.flux.payload.dumper.ui.components.RelinkDialog
-import com.flux.payload.dumper.ui.components.RowDivider
-import com.flux.payload.dumper.ui.components.SegmentedToggle
 import com.flux.payload.dumper.ui.components.SettingsDialog
-import com.flux.payload.dumper.ui.components.formatSize
 import com.flux.payload.dumper.ui.theme.FluxRadius
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
 import com.flux.payload.dumper.viewmodel.DumperViewModel
@@ -87,15 +80,18 @@ import com.flux.payload.dumper.viewmodel.ParseState
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DumperScreen(vm: DumperViewModel) {
-    val input by vm.input.collectAsState()
+    val selection by vm.selection.collectAsState()
+    val inputLocked by vm.inputLocked.collectAsState()
     val parseState by vm.parseState.collectAsState()
     val partitions by vm.partitions.collectAsState()
     val search by vm.search.collectAsState()
     val snackbar by vm.snackbar.collectAsState()
     val relink by vm.relink.collectAsState()
+    val relinkBusy by vm.relinkBusy.collectAsState()
+    val batchRunning by vm.batchRunning.collectAsState()
 
     val context = LocalContext.current
-    var sourceMode by remember { mutableIntStateOf(if (input.startsWith("http")) 1 else 0) }
+    LaunchedEffect(Unit) { vm.refreshDocumentDetails() }
     var showSettings by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
     var showPermission by remember { mutableStateOf(false) }
@@ -111,7 +107,7 @@ fun DumperScreen(vm: DumperViewModel) {
             runCatching {
                 context.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            vm.updateInput(it.toString())
+            vm.selectDocument(it)
         }
     }
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
@@ -132,8 +128,7 @@ fun DumperScreen(vm: DumperViewModel) {
             .onFailure { permissionLauncher.launch(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) }
     }
     fun doParse() {
-        val t = input.trim()
-        if (t.startsWith("http") || t.startsWith("content://")) vm.parse() else requireStorage { vm.parse() }
+        vm.parse() // SAF reads need only the picked URI grant, not all-files access.
     }
 
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
@@ -152,12 +147,12 @@ fun DumperScreen(vm: DumperViewModel) {
             },
             snackbarHost = { SnackbarHost(snackbarHostState) },
             floatingActionButton = {
-                if (parseState is ParseState.Ready && partitions.isNotEmpty()) {
+                if (parseState is ParseState.Ready && partitions.isNotEmpty() && !inputLocked) {
                     ExtractFab(text = stringResource(R.string.extract_all), icon = Icons.Rounded.Download, onClick = { requireStorage { vm.extractAll() } })
                 }
             },
         ) { padding ->
-            // COUI 17 的列表左右边距是 16dp（卡片外的 margin），卡片内行 padding 是 32dp
+            // COUI17 card margin token: 16dp. Keep each partition lazy and independently rounded.
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
@@ -171,11 +166,11 @@ fun DumperScreen(vm: DumperViewModel) {
                 // COUI 17 分类标题：左 margin 16dp（category_marginStart），紧贴列表
                 item { CategoryHeader(stringResource(R.string.cat_source)) }
                 item {
-                    InputCard(
-                        mode = sourceMode,
-                        onModeChange = { sourceMode = it },
-                        value = input,
-                        onValueChange = vm::updateInput,
+                    SourceCard(
+                        selection = selection,
+                        onModeChange = vm::changeSourceMode,
+                        onUrlChange = vm::updateNetworkUrl,
+                        locked = inputLocked,
                         onBrowse = { filePicker.launch(arrayOf("*/*")) },
                         parsing = parseState is ParseState.Parsing,
                         onParse = ::doParse,
@@ -189,37 +184,36 @@ fun DumperScreen(vm: DumperViewModel) {
                         item { Spacer(Modifier.height(12.dp)) }
                         item { ParseProgressCard(st.detail) }
 
-                        // Rows published by archives that have already been scanned. A Honor
-                        // package is scanned archive by archive, so the first results are usable
-                        // long before the last one lands — showing them here means the user can
-                        // start extracting while the remainder is still being read, instead of
-                        // watching a progress bar with nothing under it.
+                        // Show partial results immediately; extraction is enabled when parsing commits the source.
                         if (partitions.isNotEmpty()) {
                             item { CategoryHeader(stringResource(R.string.images_header, partitions.size)) }
                             item { Spacer(Modifier.height(8.dp)) }
-                            item {
-                                CardGroup {
-                                    partitions.forEachIndexed { i, p ->
-                                        PartitionRow(info = p, onExtract = { requireStorage { vm.extract(p.partitionName) } })
-                                        if (i < partitions.lastIndex) RowDivider(startInset = 72.dp)
-                                    }
+                            items(partitions, key = { it.partitionName }) { p ->
+                                CardGroup(Modifier.padding(bottom = 8.dp)) {
+                                    PartitionRow(info = p, enabled = false, onExtract = {})
                                 }
                             }
                         }
                     }
                     is ParseState.Ready -> {
                         item { CategoryHeader(stringResource(R.string.cat_package)) }
-                        item { OtaSummaryCard(st.archive) }
+                        item { FirmwareInfoCard(st.archive) }
 
                         item { CategoryHeader(stringResource(R.string.images_header, partitions.size)) }
                         item { SearchField(search, vm::updateSearch) }
                         item { Spacer(Modifier.height(8.dp)) }
-                        item {
-                            CardGroup {
-                                partitions.forEachIndexed { i, p ->
-                                    PartitionRow(info = p, onExtract = { requireStorage { vm.extract(p.partitionName) } })
-                                    if (i < partitions.lastIndex) RowDivider(startInset = 72.dp)
-                                }
+                        if (partitions.isEmpty()) {
+                            item {
+                                Text(
+                                    stringResource(R.string.search_empty),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(24.dp),
+                                )
+                            }
+                        }
+                        items(partitions, key = { it.partitionName }) { p ->
+                            CardGroup(Modifier.padding(bottom = 8.dp)) {
+                                PartitionRow(info = p, enabled = !batchRunning && relink == null && !relinkBusy, onExtract = { requireStorage { vm.extract(p.partitionName) } })
                             }
                         }
                     }
@@ -234,7 +228,7 @@ fun DumperScreen(vm: DumperViewModel) {
     }
 
     relink?.let { name ->
-        RelinkDialog(partitionName = name, onSubmit = { vm.submitNewLink(it) }, onCancel = { vm.cancelRelink() })
+        RelinkDialog(partitionName = name, busy = relinkBusy, onSubmit = { vm.submitNewLink(it) }, onCancel = { vm.cancelRelink() })
     }
     if (showSettings) SettingsDialog(onDismiss = { showSettings = false })
     if (showAbout) AboutDialog(onDismiss = { showAbout = false })
@@ -264,8 +258,8 @@ private fun FluxTopBar(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.displaySmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 28.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = (32f - 8f * scrollBehavior.state.collapsedFraction).sp,
                 ),
             )
         },
@@ -285,104 +279,8 @@ private fun FluxTopBar(
             titleContentColor = MaterialTheme.colorScheme.onBackground,
         ),
         scrollBehavior = scrollBehavior,
+        expandedHeight = 110.dp,
     )
-}
-
-/**
- * 输入卡片——COUI 17 卡片内有 32dp 内距。
- */
-@Composable
-private fun InputCard(
-    mode: Int,
-    onModeChange: (Int) -> Unit,
-    value: String,
-    onValueChange: (String) -> Unit,
-    onBrowse: () -> Unit,
-    parsing: Boolean,
-    onParse: () -> Unit,
-) {
-    val flux = LocalFluxColors.current
-    CardGroup {
-        Column(modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 20.dp, bottom = 20.dp)) {
-            SegmentedToggle(
-                options = listOf(stringResource(R.string.source_local), stringResource(R.string.source_network)),
-                selectedIndex = mode,
-                onSelect = onModeChange,
-            )
-            Spacer(Modifier.height(16.dp))
-            OutlinedTextField(
-                value = value,
-                onValueChange = onValueChange,
-                placeholder = { Text(stringResource(if (mode == 0) R.string.input_hint_local else R.string.input_hint_network)) },
-                leadingIcon = {
-                    IconBox(
-                        icon = if (mode == 0) Icons.Rounded.FolderOpen else Icons.Rounded.CloudUpload,
-                        contentDescription = null,
-                        tint = if (mode == 0) flux.iconLocal else flux.iconUrl,
-                        bgColor = Color.Transparent,
-                        size = 28.dp,
-                        iconSize = 18.dp,
-                    )
-                },
-                trailingIcon = {
-                    if (mode == 0) {
-                        IconButton(onClick = onBrowse) {
-                            Icon(Icons.Rounded.FolderOpen, contentDescription = stringResource(R.string.action_browse))
-                        }
-                    }
-                },
-                singleLine = false,
-                maxLines = 3,
-                shape = RoundedCornerShape(FluxRadius.Field),
-                modifier = Modifier.fillMaxWidth(),
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = flux.fieldBg,
-                    unfocusedContainerColor = flux.fieldBg,
-                    focusedIndicatorColor = flux.accent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                ),
-            )
-            Spacer(Modifier.height(16.dp))
-            AccentButton(
-                text = stringResource(if (parsing) R.string.action_parsing else R.string.action_parse),
-                onClick = onParse,
-                enabled = !parsing,
-            )
-        }
-    }
-}
-
-/**
- * OTA 摘要卡片——精确模仿 coui_preference_assignment_in_right 行结构。
- * 每行 paddingStart/End = 32dp，行间分割线从 32dp 开始。
- */
-@Composable
-private fun OtaSummaryCard(info: ArchiveInfo) {
-    val flux = LocalFluxColors.current
-    CardGroup {
-        // 文件名标题区域——不使用标准 InfoRow，用自定义标题块
-        Column(modifier = Modifier.padding(start = 32.dp, end = 32.dp, top = 20.dp, bottom = 8.dp)) {
-            Text(
-                info.fileName,
-                style = MaterialTheme.typography.titleMedium,
-                color = flux.labelPrimary,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                stringResource(R.string.block_size, info.blockSize),
-                style = MaterialTheme.typography.bodyMedium,
-                color = flux.labelSecondary,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
-        RowDivider(startInset = 32.dp)
-        InfoRow(stringResource(R.string.summary_file_size), formatSize(info.fileSize))
-        RowDivider(startInset = 32.dp)
-        InfoRow(stringResource(R.string.summary_security_patch), info.securityPatchLevel.ifBlank { "—" })
-        RowDivider(startInset = 32.dp)
-        InfoRow(stringResource(R.string.summary_partitions), "${info.partitionCount}")
-    }
 }
 
 @Composable
