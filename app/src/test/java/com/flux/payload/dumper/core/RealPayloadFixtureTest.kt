@@ -9,18 +9,30 @@ import java.io.IOException
  * Parses the real 8.2 GB PJZ110 package through the production parser without the network.
  *
  * Only the byte ranges the parser actually touches are checked in (central directory tail,
- * payload header/manifest, metadata block). Every other read is a hole and fails loudly, so
- * this test proves the ZIP64 locator and CrAU parser against real bytes rather than a mock
- * that could accidentally accept the bug.
+ * payload header/manifest, metadata block and every boot operation blob). Every other read is
+ * a hole and fails loudly, so this test proves the ZIP64 locator, CrAU parser and boot kernel
+ * reconstruction against real bytes rather than a mock that could accept a broken implementation.
  */
 class RealPayloadFixtureTest {
 
     private class FixtureSource : PayloadSource {
-        private val chunks: List<Pair<Long, ByteArray>> = listOf(
-            0L to resource("metadata-block.bin"),
-            2794L to resource("payload-head.bin"),
-            8_213_840_646L to resource("zip-tail.bin"),
-        )
+        private val chunks: List<Pair<Long, ByteArray>> = buildList {
+            add(0L to resource("metadata-block.bin"))
+            add(2794L to resource("payload-head.bin"))
+            add(8_213_840_646L to resource("zip-tail.bin"))
+
+            // Every non-empty boot operation blob, at its absolute payload offset.
+            val blobs = resource("boot-blobs.bin")
+            var cursor = 0
+            resourceText("boot-index.txt").lineSequence()
+                .filter { it.isNotBlank() }
+                .forEach { line ->
+                    val (offset, length) = line.split(' ').map(String::toLong)
+                    add(offset to blobs.copyOfRange(cursor, cursor + length.toInt()))
+                    cursor += length.toInt()
+                }
+            check(cursor == blobs.size) { "boot index does not cover the blob file" }
+        }
 
         override val size = 8_214_889_222L
 
@@ -40,6 +52,10 @@ class RealPayloadFixtureTest {
 
         private fun resource(name: String): ByteArray =
             checkNotNull(javaClass.getResourceAsStream("/real-ota/$name")) { "missing $name" }.use { it.readBytes() }
+
+        private fun resourceText(name: String): String =
+            checkNotNull(javaClass.getResourceAsStream("/real-ota/$name")) { "missing $name" }
+                .bufferedReader().use { it.readText() }
     }
 
     @Test
@@ -64,6 +80,10 @@ class RealPayloadFixtureTest {
         assertTrue(
             "fingerprint was '${info.fingerprint}'",
             info.fingerprint.contains("OnePlus/PJZ110/OP5D0DL1:15/"),
+        )
+        assertEquals(
+            "6.6.66-android15-8-g29d86c5fc9dd-abogki428889875-4k",
+            info.kernelVersion,
         )
     }
 }

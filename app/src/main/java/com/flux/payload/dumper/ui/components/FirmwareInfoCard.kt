@@ -36,25 +36,26 @@ import com.flux.payload.dumper.ui.theme.LocalFluxColors
 @Composable
 fun FirmwareInfoCard(info: ArchiveInfo) {
     val unknown = stringResource(R.string.metadata_unknown)
+    val kernelLabel = stringResource(R.string.summary_kernel_version)
     val rows = listOf(
-        stringResource(R.string.summary_file_name) to info.fileName,
-        stringResource(R.string.summary_file_size) to "${formatSize(info.fileSize)} (${info.fileSize} B)",
-        stringResource(R.string.summary_android_version) to info.androidVersion,
-        stringResource(R.string.summary_security_patch) to info.securityPatchLevel,
-        stringResource(R.string.summary_kernel_version) to info.kernelVersion,
-        stringResource(R.string.summary_fingerprint) to info.fingerprint,
-        stringResource(R.string.summary_partitions) to info.partitionCount.toString(),
-        stringResource(R.string.summary_block_size) to "${info.blockSize} B",
+        Triple(stringResource(R.string.summary_file_name), info.fileName, 2),
+        Triple(stringResource(R.string.summary_file_size), "${formatSize(info.fileSize)} (${info.fileSize} B)", 2),
+        Triple(stringResource(R.string.summary_android_version), info.androidVersion, 2),
+        Triple(stringResource(R.string.summary_security_patch), info.securityPatchLevel, 2),
+        Triple(kernelLabel, info.kernelVersion, 3),
+        Triple(stringResource(R.string.summary_fingerprint), info.fingerprint, 2),
+        Triple(stringResource(R.string.summary_partitions), info.partitionCount.toString(), 2),
+        Triple(stringResource(R.string.summary_block_size), "${info.blockSize} B", 2),
     )
     var detail by remember(info) { mutableStateOf<Pair<String, String>?>(null) }
     val flux = LocalFluxColors.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        rows.forEach { (label, rawValue) ->
+        rows.forEach { (label, rawValue, maxLines) ->
             val known = rawValue.isNotBlank() && rawValue != "—"
             CardGroup(
                 modifier = Modifier.clickable(enabled = known, role = Role.Button) { detail = label to rawValue },
             ) {
-                InfoRow(label, if (known) rawValue else unknown)
+                InfoRow(label, if (known) rawValue else unknown, valueMaxLines = maxLines)
             }
         }
         Text(

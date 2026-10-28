@@ -105,6 +105,7 @@ fun InfoRow(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     onClickLabel: String? = null,
+    valueMaxLines: Int = 2,
 ) {
     val flux = LocalFluxColors.current
     Row(
@@ -133,7 +134,7 @@ fun InfoRow(
             style = MaterialTheme.typography.bodyMedium,
             color = valueColor,
             textAlign = TextAlign.End,
-            maxLines = 2,
+            maxLines = valueMaxLines,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1.3f),
         )
@@ -158,7 +159,7 @@ fun SegmentedToggle(
     Box(modifier = modifier.fillMaxWidth().selectableGroup()) {
         Box(
             Modifier.matchParentSize()
-                .padding(vertical = 4.dp)
+                .padding(4.dp)
                 .clip(RoundedCornerShape(FluxRadius.Pill))
                 .background(flux.segmentTrack),
         )
