@@ -82,12 +82,15 @@ jobs:
         shell: bash
 
       - name: Zipalign, sign and verify
+        env:
+          FLUX_SIGN_PASS: ${{ secrets.FLUX_SIGNING_PASSWORD }}
         run: |
           set -e
           BT="$ANDROID_HOME/build-tools/35.0.0"
+          test -n "$FLUX_SIGN_PASS"
           "$BT/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
           "$BT/apksigner" sign --ks release.p12 --ks-key-alias flux \
-            --ks-pass file:signing-password.txt --key-pass file:signing-password.txt \
+            --ks-pass env:FLUX_SIGN_PASS --key-pass env:FLUX_SIGN_PASS \
             --out "PayloadDumper-Flux-${{ steps.version.outputs.name }}.apk" aligned.apk
           "$BT/apksigner" verify --verbose --print-certs "PayloadDumper-Flux-${{ steps.version.outputs.name }}.apk"
           sha256sum PayloadDumper-Flux-*.apk > SHA256SUMS.txt
