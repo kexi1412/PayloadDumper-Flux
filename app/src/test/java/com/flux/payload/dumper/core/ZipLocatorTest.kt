@@ -76,7 +76,7 @@ class ZipLocatorTest {
             s(0); s(0)
             s(0xFFFF); s(0xFFFF)
             putInt(0xFFFFFFFF.toInt()); putInt(0xFFFFFFFF.toInt())
-            s(comment.size.toShort())
+            s(comment.size)
             put(comment)
         }.array()
 
