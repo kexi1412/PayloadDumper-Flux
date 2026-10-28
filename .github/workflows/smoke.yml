@@ -37,6 +37,7 @@ jobs:
       - name: Parse the real OTA with HttpSource + UniversalParser
         env:
           FLUX_REAL_OTA_URL: ${{ inputs.url }}
+          FLUX_MEIZU_OTA_URL: ${{ inputs.url }}
         run: |
           chmod +x ./gradlew
           ./gradlew testDebugUnitTest --tests "${{ inputs.filter }}" --no-daemon --stacktrace
@@ -45,6 +46,7 @@ jobs:
         if: always()
         run: |
           cat app/build/real-ota-result.txt || true
+          cat app/build/meizu-ota-result.txt || true
 
       - name: Upload reports
         if: always()
@@ -53,6 +55,7 @@ jobs:
           name: real-ota-smoke-reports
           path: |
             app/build/real-ota-result.txt
+            app/build/meizu-ota-result.txt
             app/build/reports/tests/
             app/build/test-results/
           if-no-files-found: warn
