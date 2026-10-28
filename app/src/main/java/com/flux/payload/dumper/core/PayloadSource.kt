@@ -219,39 +219,64 @@ class HttpSource private constructor(
         require(offset >= 0 && len >= 0 && offset <= size - len) { "Read outside remote archive" }
         require(bufOffset >= 0 && bufOffset <= buffer.size - len) { "Read outside destination buffer" }
         if (len == 0) return
-        val end = offset + len - 1
-        val req = Request.Builder().url(url)
-            .header("Range", "bytes=$offset-$end")
-            .header("Accept-Encoding", "identity")
-            .header("Cache-Control", "no-transform")
-            .build()
+        var pos = offset
+        var left = len
         var attempt = 0
-        while (true) {
+        var chunkLimit = CHUNK_BYTES
+        // Some firmware CDNs close a large Range response early while still advertising the
+        // full Content-Length. Reads are therefore split into bounded chunks: a short chunk is
+        // resumed at the first missing byte, and a chunk that yields nothing is retried with
+        // backoff and a smaller window. The caller still receives exactly [len] bytes or an
+        // exception; a truncated body is never reported as success.
+        while (left > 0) {
+            val chunk = minOf(left, chunkLimit)
+            val end = pos + chunk - 1
+            val req = Request.Builder().url(url)
+                .header("Range", "bytes=$pos-$end")
+                .header("Accept-Encoding", "identity")
+                .header("Cache-Control", "no-transform")
+                .build()
             try {
+                var read = 0
                 client.newCall(req).execute().use { resp ->
-                    validateRange(resp, offset, end, size)
+                    validateRange(resp, pos, end, size)
                     val body = resp.body ?: throw IOException("Empty body")
-                    val decoded = decodeRangeBody(body, resp.header("Content-Encoding"), len.toLong())
+                    val decoded = decodeRangeBody(body, resp.header("Content-Encoding"), chunk.toLong())
                     if (decoded.encoded) {
                         // A CDN may gzip each range independently. The decoded length must be
                         // exactly the requested range, otherwise the bytes cannot be positioned.
-                        readExact(decoded.stream, buffer, bufOffset, len, offset)
+                        read = readExact(decoded.stream, buffer, bufOffset + (pos - offset), chunk, pos)
                         if (decoded.stream.read() != -1) {
                             throw java.net.ProtocolException(
-                                "Compressed HTTP range decoded beyond the requested $len bytes at $offset"
+                                "Compressed HTTP range decoded beyond the requested $chunk bytes at $pos"
                             )
                         }
                     } else {
-                        if (body.contentLength() >= 0 && body.contentLength() != len.toLong()) {
+                        if (body.contentLength() >= 0 && body.contentLength() != chunk.toLong()) {
                             throw IOException("HTTP range body length mismatch")
                         }
-                        readExact(decoded.stream, buffer, bufOffset, len, offset)
+                        read = readExact(decoded.stream, buffer, bufOffset + (pos - offset), chunk, pos)
                     }
                 }
-                return
+                pos += read
+                left -= read
+                attempt = 0
+            } catch (e: ShortReadException) {
+                val got = e.read
+                pos += got
+                left -= got
+                if (got > 0) {
+                    attempt = 0
+                } else {
+                    attempt++
+                    if (attempt >= MAX_RETRIES) throw e
+                    chunkLimit = maxOf(MIN_CHUNK_BYTES, chunkLimit / 2)
+                    Thread.sleep(RETRY_DELAY_MS * attempt)
+                }
             } catch (e: IOException) {
                 // A protocol violation cannot be repaired by writing bytes from offset zero.
-                if (e is java.net.ProtocolException || ++attempt >= MAX_RETRIES) throw e
+                if (e is java.net.ProtocolException && e !is ShortReadException) throw e
+                if (++attempt >= MAX_RETRIES) throw e
                 Thread.sleep(RETRY_DELAY_MS * attempt)
             }
         }
@@ -262,6 +287,14 @@ class HttpSource private constructor(
     companion object {
         private const val MAX_RETRIES = 3
         private const val RETRY_DELAY_MS = 400L
+        private const val CHUNK_BYTES = 256 * 1024
+        private const val MIN_CHUNK_BYTES = 16 * 1024
+
+        private class ShortReadException(
+            val read: Int,
+            message: String,
+            cause: Throwable? = null,
+        ) : IOException(message, cause)
 
         /** Probe total size + filename with a 1-byte ranged request, then build the source. */
         fun open(url: String, client: OkHttpClient): HttpSource {
@@ -329,13 +362,18 @@ class HttpSource private constructor(
             bufOffset: Int,
             len: Int,
             offset: Long,
-        ) {
+        ): Int {
             var read = 0
             while (read < len) {
-                val n = stream.read(buffer, bufOffset + read, len - read)
-                if (n <= 0) throw EOFException("Short read: got $read of $len at $offset")
+                val n = try {
+                    stream.read(buffer, bufOffset + read, len - read)
+                } catch (e: IOException) {
+                    throw ShortReadException(read, "Short read: got $read of $len at $offset", e)
+                }
+                if (n <= 0) throw ShortReadException(read, "Short read: got $read of $len at $offset")
                 read += n
             }
+            return read
         }
 
         private fun validateRange(resp: okhttp3.Response, first: Long, last: Long, total: Long?): HttpArchiveHeaders.ByteRange {

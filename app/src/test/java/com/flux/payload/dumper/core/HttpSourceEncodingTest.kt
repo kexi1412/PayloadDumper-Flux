@@ -91,4 +91,59 @@ class HttpSourceEncodingTest {
             assertArrayEquals(payload.copyOfRange(1, 6), readThrough(server, 1, 5))
         }
     }
+
+    @Test fun truncatedRangeIsResumedAtTheFirstMissingByte() {
+        val body = ByteArray(2048) { (it * 31).toByte() }
+        var truncated = false
+        MockWebServer().use { server ->
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    val match = Regex("bytes=(\\d+)-(\\d+)").find(request.getHeader("Range")!!)!!
+                    val first = match.groupValues[1].toInt()
+                    val last = match.groupValues[2].toInt()
+                    if (!truncated && first >= 512 && last >= 700) {
+                        truncated = true
+                        return MockResponse().setResponseCode(206)
+                            .setHeader("Content-Range", "bytes $first-$last/${body.size}")
+                            .setBody(Buffer().write(body.copyOfRange(first, first + 100)))
+                    }
+                    return MockResponse().setResponseCode(206)
+                        .setHeader("Content-Range", "bytes $first-$last/${body.size}")
+                        .setBody(Buffer().write(body.copyOfRange(first, last + 1)))
+                }
+            }
+            server.start()
+            HttpSource.open(server.url("/firmware.zip").toString(), OkHttpClient()).use { source ->
+                assertEquals(body.size.toLong(), source.size)
+                assertArrayEquals(body.copyOfRange(512, 2048), source.readFully(512, 1536))
+            }
+        }
+    }
+
+    @Test fun emptyRangeIsRetriedInsteadOfReturnedAsSuccess() {
+        val body = ByteArray(1024) { it.toByte() }
+        var empty = false
+        MockWebServer().use { server ->
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    val match = Regex("bytes=(\\d+)-(\\d+)").find(request.getHeader("Range")!!)!!
+                    val first = match.groupValues[1].toInt()
+                    val last = match.groupValues[2].toInt()
+                    if (!empty && first >= 256) {
+                        empty = true
+                        return MockResponse().setResponseCode(206)
+                            .setHeader("Content-Range", "bytes $first-$last/${body.size}")
+                            .setBody(Buffer())
+                    }
+                    return MockResponse().setResponseCode(206)
+                        .setHeader("Content-Range", "bytes $first-$last/${body.size}")
+                        .setBody(Buffer().write(body.copyOfRange(first, last + 1)))
+                }
+            }
+            server.start()
+            HttpSource.open(server.url("/firmware.zip").toString(), OkHttpClient()).use { source ->
+                assertArrayEquals(body.copyOfRange(256, 1024), source.readFully(256, 768))
+            }
+        }
+    }
 }
