@@ -131,7 +131,7 @@ object UniversalParser {
     ): ParseResult {
         val parsed = when (format) {
             is ArchiveFormat.CrAUPayload -> {
-                val payload = PayloadParser.parse(input)
+                val payload = PayloadParser.parse(input, input.readFully(0, 4))
                 ParseResult.CrAU(payload, ArchiveInfo(
                     fileName = input.fileName(),
                     fileSize = input.size,
