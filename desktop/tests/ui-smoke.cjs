@@ -46,7 +46,8 @@ async function main() {
       args.push('--no-sandbox');
     }
     if (!process.env.FLUX_TEST_APP) args.push(root);
-    const env = { ...process.env, FLUX_USER_DATA: profile, FLUX_TEST_HIDDEN: '1' };
+    // A never-shown native window can wait forever for a compositor screenshot frame.
+    const env = { ...process.env, FLUX_USER_DATA: profile, FLUX_TEST_HIDDEN: '0' };
     delete env.ELECTRON_RUN_AS_NODE;
     child = spawn(executable, args, { cwd: root, env, windowsHide: true, stdio: ['ignore', 'ignore', 'inherit'] });
     const spawned = new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
@@ -54,7 +55,7 @@ async function main() {
     const deadline = Date.now() + 45000;
     while (!browser && Date.now() < deadline) {
       if (child.exitCode !== null) throw new Error(`Electron exited before connecting: ${child.exitCode}`);
-      try { browser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: null }); }
+      try { browser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: null, protocolTimeout: 30000 }); }
       catch { await delay(200); }
     }
     assert(browser, 'Electron DevTools endpoint did not become ready');
