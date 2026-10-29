@@ -19,8 +19,11 @@ object ZipLocator {
     private const val PAYLOAD_NAME = "payload.bin"
 
     /** Absolute offset where the CrAU stream begins, or throws if it can't be located. */
-    fun findPayloadOffset(source: PayloadSource): Long {
-        if (source.fileName().endsWith(".bin", ignoreCase = true)) return 0L
+    fun findPayloadOffset(source: PayloadSource, prefix: ByteArray? = null): Long {
+        // Signed/CDN links often have no .bin suffix; filenames cannot identify the format.
+        val magic = prefix ?: source.readFully(0, minOf(4L, source.size).toInt())
+        if (magic.size >= 4 && magic[0] == 'C'.code.toByte() && magic[1] == 'r'.code.toByte() &&
+            magic[2] == 'A'.code.toByte() && magic[3] == 'U'.code.toByte()) return 0L
 
         val entry = ZipScanner.scanEntries(source).firstOrNull { it.name == PAYLOAD_NAME }
             ?: throw IOException("payload.bin not found inside the zip")

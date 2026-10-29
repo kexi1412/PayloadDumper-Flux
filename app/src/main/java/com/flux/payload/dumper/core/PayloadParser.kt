@@ -19,12 +19,14 @@ object PayloadParser {
     private const val FORMAT_VERSION = 2L
 
     fun parse(source: PayloadSource): Payload {
-        val payloadOffset = ZipLocator.findPayloadOffset(source)
+        if (source.size < 24) throw IOException("Truncated payload header")
+        val prefix = source.readFully(0, 24)
+        val payloadOffset = ZipLocator.findPayloadOffset(source, prefix)
         if (payloadOffset < 0 || payloadOffset > source.size - 24) {
             throw IOException("Truncated payload header")
         }
-        // One positioned read, not four HTTP round trips for a 24-byte header.
-        val header = java.nio.ByteBuffer.wrap(source.readFully(payloadOffset, 24))
+        // Reuse the sniffed CrAU header: direct payloads still need only one fixed-header read.
+        val header = java.nio.ByteBuffer.wrap(if (payloadOffset == 0L) prefix else source.readFully(payloadOffset, 24))
             .order(java.nio.ByteOrder.BIG_ENDIAN)
         val magic = ByteArray(4).also { header.get(it) }
         if (String(magic, StandardCharsets.US_ASCII) != MAGIC) {

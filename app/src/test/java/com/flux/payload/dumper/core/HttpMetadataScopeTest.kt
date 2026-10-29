@@ -61,6 +61,7 @@ class HttpMetadataScopeTest {
                         releaseExtraction.countDown()
                         val failure = assertThrows(ExecutionException::class.java) { blocked.get(2, TimeUnit.SECONDS) }
                         assertTrue(failure.cause is IOException)
+                        assertFalse(HttpReadFailure.isRemoteReadFailure(failure))
                         assertArrayEquals(body.copyOfRange(100, 164), extracting.get(2, TimeUnit.SECONDS))
                         assertArrayEquals(body.copyOfRange(500, 520), parent.readFully(500, 20))
                     } finally {

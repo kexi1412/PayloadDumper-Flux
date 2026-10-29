@@ -67,10 +67,12 @@
     <string name="action_ok">好的</string>
 
     <!-- Relink dialog -->
-    <string name="relink_title">链接已失效</string>
+    <string name="relink_title">远程读取中断</string>
     <string name="relink_body">分区「%1$s」下载中断，进度已保留。请粘贴一个新的 OTA 直链继续续传。\n提交后会核对完整清单与操作布局，完全一致才复用已保存进度。</string>
     <string name="relink_input_label">新的 OTA 直链 URL</string>
     <string name="relink_confirm">校验并续传</string>
+    <string name="relink_checking">正在校验…</string>
+    <string name="relink_reason">中断原因：%1$s</string>
     <string name="action_cancel">取消</string>
 
     <!-- Permission dialog -->
@@ -82,7 +84,7 @@
     <string name="msg_input_required">请选择本地文件或填写网络链接</string>
     <string name="err_file_unreadable">文件不存在或不可读：%1$s</string>
     <string name="msg_extract_verify_failed">%1$s 提取完成，但校验未通过</string>
-    <string name="msg_link_stalled">链接失效或网络中断，请提交新链接续传</string>
+    <string name="msg_link_stalled">远程读取失败，进度已保留：%1$s</string>
     <string name="msg_invalid_http">请填写有效的 http(s) 链接</string>
     <string name="err_partition_missing">新链接中不存在分区 %1$s</string>
     <string name="err_different_rom">新链接的完整清单或操作布局不同（%1$s），不能复用旧进度</string>
