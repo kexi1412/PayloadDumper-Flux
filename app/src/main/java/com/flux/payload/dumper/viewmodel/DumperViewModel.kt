@@ -12,6 +12,7 @@ import com.flux.payload.dumper.R
 import com.flux.payload.dumper.core.Diagnostics
 import com.flux.payload.dumper.core.FirmwareMetadataReader
 import com.flux.payload.dumper.core.HttpSource
+import com.flux.payload.dumper.core.HttpReadFailure
 import com.flux.payload.dumper.core.NestedZipStream
 import com.flux.payload.dumper.core.Net
 import com.flux.payload.dumper.core.ParseResult
@@ -46,6 +47,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -85,6 +87,10 @@ class DumperViewModel : ViewModel() {
     val relink: StateFlow<String?> = _relink.asStateFlow()
     private val _relinkBusy = MutableStateFlow(false)
     val relinkBusy: StateFlow<Boolean> = _relinkBusy.asStateFlow()
+    private val _relinkReason = MutableStateFlow<String?>(null)
+    val relinkReason: StateFlow<String?> = _relinkReason.asStateFlow()
+    private val _relinkError = MutableStateFlow<String?>(null)
+    val relinkError: StateFlow<String?> = _relinkError.asStateFlow()
     private var relinkJob: Job? = null
     private var relinkEpoch = 0L
     private var archiveGeneration = 0L
@@ -575,15 +581,19 @@ class DumperViewModel : ViewModel() {
                 resumeStates.remove(partitionName)
                 if (result.verified == false) _snackbar.value = str(R.string.msg_extract_verify_failed, partitionName)
             }.onFailure { e ->
-                if (e is CancellationException) {
+                if (e is CancellationException || !currentCoroutineContext().isActive) {
                     update(partitionName) { it.copy(extractState = ExtractState.PAUSED, message = str(R.string.msg_cancelled_progress_kept)) }
+                    currentCoroutineContext().ensureActive()
                     throw e
                 }
-                // A network read that died on a remote source is almost always an expired/broken OTA
-                // link. Keep the partial output + resume state and ask the user for a fresh link.
-                if (source is HttpSource && e is IOException) {
+                // A URL replacement can repair only failures proven to originate in HTTP reads.
+                // Disk, hash and unsupported-payload errors must retain their real cause.
+                if (src is HttpSource && HttpReadFailure.isRemoteReadFailure(e)) {
+                    val reason = e.message ?: e.javaClass.simpleName
+                    _relinkReason.value = reason
+                    _relinkError.value = null
                     update(partitionName) {
-                        it.copy(extractState = ExtractState.PAUSED, message = str(R.string.msg_link_stalled))
+                        it.copy(extractState = ExtractState.PAUSED, message = str(R.string.msg_link_stalled, reason))
                     }
                     _relink.value = partitionName
                 } else {
@@ -602,13 +612,14 @@ class DumperViewModel : ViewModel() {
         val original = payload ?: return
         val url = newUrl.trim()
         if (!SourceSelection.isHttpUrl(url)) {
-            _snackbar.value = str(R.string.msg_invalid_http)
+            _relinkError.value = str(R.string.msg_invalid_http)
             return
         }
         val generation = archiveGeneration
         val epoch = ++relinkEpoch
         cancelKernelMetadata()
         val expected = original.manifest.toByteArray()
+        _relinkError.value = null
         _relinkBusy.value = true
         relinkJob = viewModelScope.launch {
             val thisJob = currentCoroutineContext()[Job]
@@ -621,7 +632,7 @@ class DumperViewModel : ViewModel() {
                 val freshPayload = runInterruptible(Dispatchers.IO) {
                     val freshSource = HttpSource.open(url, client)
                     candidate = freshSource
-                    val fresh = PayloadParser.parse(freshSource)
+                    val fresh = freshSource.forParsing().use { PayloadParser.parse(it) }
                     if (fresh.manifest.partitionsList.none { it.partitionName == name }) {
                         throw IOException(str(R.string.err_partition_missing, name))
                     }
@@ -650,13 +661,19 @@ class DumperViewModel : ViewModel() {
                     startKernelMetadata(freshSource, refreshed, generation)
                 }
                 _relink.value = null
+                _relinkReason.value = null
+                _relinkError.value = null
                 _relinkBusy.value = false
                 _snackbar.value = str(R.string.msg_resume_same_rom, name)
                 extractInternal(name)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (generation == archiveGeneration && epoch == relinkEpoch) _snackbar.value = e.message ?: str(R.string.msg_relink_failed)
+                currentCoroutineContext().ensureActive()
+                if (generation == archiveGeneration && epoch == relinkEpoch) {
+                    // The validation failure must remain visible above the modal, not behind it.
+                    _relinkError.value = e.message ?: str(R.string.msg_relink_failed)
+                }
             } finally {
                 if (!committed) runCatching { candidate?.close() }
                 if (relinkJob == thisJob) {
@@ -673,6 +690,8 @@ class DumperViewModel : ViewModel() {
         cancelKernelMetadata()
         relinkJob?.cancel()
         _relink.value = null
+        _relinkReason.value = null
+        _relinkError.value = null
         update(name) { it.copy(extractState = ExtractState.ERROR, message = str(R.string.msg_cancelled_progress_kept)) }
     }
 

@@ -109,7 +109,10 @@ class HttpSource private constructor(
         if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException("HTTP archive read interrupted")
         if (closed.get()) throw IOException("HTTP archive source closed")
         if (deadlineNanos != null && deadlineNanos - System.nanoTime() <= 0) {
-            throw java.net.SocketTimeoutException("Firmware metadata time budget exceeded")
+            throw HttpReadFailure.mark(
+                java.net.SocketTimeoutException("Firmware metadata time budget exceeded"),
+                HttpReadFailure.Kind.TIMEOUT,
+            )
         }
     }
 
@@ -126,7 +129,10 @@ class HttpSource private constructor(
         val call = client.newCall(request)
         deadlineNanos?.let { deadline ->
             val remaining = deadline - System.nanoTime()
-            if (remaining <= 0) throw java.net.SocketTimeoutException("Firmware metadata time budget exceeded")
+            if (remaining <= 0) throw HttpReadFailure.mark(
+                java.net.SocketTimeoutException("Firmware metadata time budget exceeded"),
+                HttpReadFailure.Kind.TIMEOUT,
+            )
             val configured = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(client.callTimeoutMillis.toLong())
             call.timeout().timeout(if (configured > 0) minOf(configured, remaining) else remaining,
                 java.util.concurrent.TimeUnit.NANOSECONDS)
@@ -135,7 +141,17 @@ class HttpSource private constructor(
         try {
             // close() may have raced with registration; never leave that call running unowned.
             checkReadAllowed()
-            return call.execute().use { read(it) }
+            var statusCode: Int? = null
+            try {
+                return call.execute().use { response ->
+                    statusCode = response.code
+                    read(response)
+                }
+            } catch (e: IOException) {
+                // close()/thread interruption is cancellation, not a broken download URL.
+                checkReadAllowed()
+                throw markReadFailure(e, statusCode)
+            }
         } finally {
             activeCalls.remove(call)
         }
@@ -227,8 +243,8 @@ class HttpSource private constructor(
                 }
             } catch (e: IOException) {
                 checkReadAllowed()
-                // A malformed range cannot be repaired by retrying it as though it were bytes 0..N.
-                if (e is java.net.ProtocolException) throw e
+                // Permanent statuses and malformed ranges cannot improve on a transport retry.
+                if (HttpReadFailure.classify(e)?.retryable != true) throw e
                 if (++transportAttempts >= MAX_TRANSPORT_RETRIES) throw e
                 pauseBeforeRetry(transportAttempts)
             }
@@ -272,6 +288,14 @@ class HttpSource private constructor(
             return client.newBuilder().readTimeout(idle, java.util.concurrent.TimeUnit.MILLISECONDS).build()
         }
 
+        private fun markReadFailure(error: IOException, statusCode: Int? = null): IOException =
+            HttpReadFailure.mark(error, when (error) {
+                is ShortReadException -> HttpReadFailure.Kind.SHORT_READ
+                is java.net.ProtocolException -> HttpReadFailure.Kind.PROTOCOL
+                is java.io.InterruptedIOException -> HttpReadFailure.Kind.TIMEOUT
+                else -> HttpReadFailure.Kind.TRANSPORT
+            }, statusCode)
+
         /** Probe total size + filename without inheriting an extraction-length stall timeout. */
         fun open(url: String, client: OkHttpClient): HttpSource {
             val req = Request.Builder().url(url)
@@ -286,19 +310,22 @@ class HttpSource private constructor(
                 val configured = client.callTimeoutMillis.toLong()
                 call.timeout().timeout(if (configured > 0) minOf(configured, SMALL_READ_TIMEOUT_MS) else SMALL_READ_TIMEOUT_MS,
                     java.util.concurrent.TimeUnit.MILLISECONDS)
-                val response = try {
-                    call.execute()
+                var statusCode: Int? = null
+                try {
+                    call.execute().use { resp ->
+                        statusCode = resp.code
+                        val range = validateRange(resp, 0, 0, null)
+                        val name = HttpArchiveHeaders.fileName(resp.header("Content-Disposition"), resp.request.url.toString())
+                        // Keep the user entry URL: a redirect target may be a single-use or
+                        // short-lived signed URL. Resolve it anew for every subsequent Range.
+                        // Filename still comes from the final response; timeouts/pool are unchanged.
+                        return HttpSource(req.url.toString(), client, range.total, name)
+                    }
                 } catch (e: IOException) {
-                    if (e is java.net.ProtocolException || Thread.currentThread().isInterrupted || attempt == MAX_TRANSPORT_RETRIES) throw e
+                    if (Thread.currentThread().isInterrupted) throw e
+                    val failure = markReadFailure(e, statusCode)
+                    if (HttpReadFailure.classify(failure)?.retryable != true || attempt == MAX_TRANSPORT_RETRIES) throw failure
                     Thread.sleep(RETRY_DELAY_MS * attempt)
-                    continue
-                }
-                response.use { resp ->
-                    // Range validation failures are not transport failures: never retry bad bytes.
-                    val range = validateRange(resp, 0, 0, null)
-                    val name = HttpArchiveHeaders.fileName(resp.header("Content-Disposition"), resp.request.url.toString())
-                    // Extraction retains the caller's original timeout policy and connection pool.
-                    return HttpSource(resp.request.url.toString(), client, range.total, name)
                 }
             }
             throw IOException("HTTP range probe failed")
@@ -380,13 +407,25 @@ class HttpSource private constructor(
 
         private fun validateRange(resp: okhttp3.Response, first: Long, last: Long, total: Long?): HttpArchiveHeaders.ByteRange {
             if (resp.code != 206) {
-                if (resp.code == 200) throw java.net.ProtocolException("Server ignored HTTP Range; refusing incorrect archive bytes")
-                throw IOException("HTTP ${resp.code} for range $first-$last")
+                if (resp.code == 200) throw HttpReadFailure.mark(
+                    java.net.ProtocolException("Server ignored HTTP Range; refusing incorrect archive bytes"),
+                    HttpReadFailure.Kind.PROTOCOL, resp.code,
+                )
+                throw HttpReadFailure.mark(
+                    IOException("HTTP ${resp.code} for range $first-$last"),
+                    HttpReadFailure.Kind.HTTP_STATUS, resp.code,
+                )
             }
             val range = HttpArchiveHeaders.contentRange(resp.header("Content-Range"))
-                ?: throw java.net.ProtocolException("Invalid or missing HTTP Content-Range")
+                ?: throw HttpReadFailure.mark(
+                    java.net.ProtocolException("Invalid or missing HTTP Content-Range"),
+                    HttpReadFailure.Kind.PROTOCOL, resp.code,
+                )
             if (range.first != first || range.last != last || (total != null && range.total != total)) {
-                throw java.net.ProtocolException("HTTP Content-Range does not match the requested archive bytes")
+                throw HttpReadFailure.mark(
+                    java.net.ProtocolException("HTTP Content-Range does not match the requested archive bytes"),
+                    HttpReadFailure.Kind.PROTOCOL, resp.code,
+                )
             }
             return range
         }

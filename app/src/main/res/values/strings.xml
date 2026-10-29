@@ -67,10 +67,12 @@
     <string name="action_ok">OK</string>
 
     <!-- Relink dialog -->
-    <string name="relink_title">Link expired</string>
+    <string name="relink_title">Remote read interrupted</string>
     <string name="relink_body">Download of partition “%1$s” was interrupted; progress is saved. Paste a new OTA direct link to resume.\nOn submit, the whole manifest and operation layout must match before progress is reused.</string>
     <string name="relink_input_label">New OTA direct-link URL</string>
     <string name="relink_confirm">Verify &amp; resume</string>
+    <string name="relink_checking">Verifying…</string>
+    <string name="relink_reason">Failure reason: %1$s</string>
     <string name="action_cancel">Cancel</string>
 
     <!-- Permission dialog -->
@@ -82,7 +84,7 @@
     <string name="msg_input_required">Select a local file or enter a network link</string>
     <string name="err_file_unreadable">File not found or unreadable: %1$s</string>
     <string name="msg_extract_verify_failed">%1$s extracted, but verification failed</string>
-    <string name="msg_link_stalled">Link expired or network interrupted; submit a new link to resume</string>
+    <string name="msg_link_stalled">Remote read failed; progress saved: %1$s</string>
     <string name="msg_invalid_http">Enter a valid http(s) link</string>
     <string name="err_partition_missing">Partition %1$s not found in the new link</string>
     <string name="err_different_rom">The new link has a different manifest or operation layout for %1$s; existing progress cannot be reused</string>

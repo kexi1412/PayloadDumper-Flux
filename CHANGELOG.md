@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.5 — 2026-10-30
+
+### Fixed / 修复
+- Remote extraction no longer labels every `IOException` as an expired URL: local output failures, operation/hash errors and unsupported delta payloads retain their actual cause. Only failures marked at the HTTP-read boundary offer link replacement.
+- Raw `payload.bin` is identified by its `CrAU` header instead of its filename. Extensionless CDN links and ZIP archives with misleading `.bin` filenames now parse correctly, including replacement-link verification.
+- HTTP reads keep the user-provided redirect entry rather than pinning a short-lived redirected URL. Permanent HTTP failures stop immediately; temporary failures retain bounded retries.
+- The relink dialog shows the original read failure and any replacement validation error directly, with a visible verifying state and bounded metadata reads. Whole-manifest and operation-layout checks remain mandatory before reusing progress.
+- Added a real HTTP 403 → extensionless replacement → saved-operation resume → exact SHA-256 regression, alongside HTTP provenance and redirect tests.
+
 ## 3.0.4 — 2026-10-29
 
 ### Fixed / 修复
