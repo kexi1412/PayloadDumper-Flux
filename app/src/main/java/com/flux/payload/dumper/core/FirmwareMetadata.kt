@@ -189,17 +189,27 @@ internal object FirmwareMetadata {
         return header.fields.copy(kernelVersion = decoded?.let(::kernelBanner).orEmpty())
     }
 
-    /** Search only the kernel region, never a ramdisk string or the host's /proc/version. */
+    /**
+     * Search only the kernel region, never a ramdisk string or the host's /proc/version.
+     * Repeated copies of one release are harmless, but two different syntactically valid
+     * banners are ambiguous: byte order alone does not prove which one backs linux_banner.
+     */
     fun kernelBanner(bytes: ByteArray): String {
         val marker = "Linux version ".toByteArray(Charsets.US_ASCII)
+        var release = ""
         for (i in 0..bytes.size - marker.size) {
             if (i and 65535 == 0) checkCancelled()
             if (bytes[i] != marker[0]) continue
             if (marker.indices.any { bytes[i + it] != marker[it] }) continue
             val window = String(bytes, i, minOf(256, bytes.size - i), Charsets.ISO_8859_1)
-            bannerPattern.find(window)?.let { return it.groupValues[1] }
+            val candidate = bannerPattern.find(window)?.groupValues?.get(1) ?: continue
+            if (release.isEmpty()) {
+                release = candidate
+            } else if (release != candidate) {
+                return ""
+            }
         }
-        return ""
+        return release
     }
 
     private fun legacyLz4(bytes: ByteArray): ByteArray {

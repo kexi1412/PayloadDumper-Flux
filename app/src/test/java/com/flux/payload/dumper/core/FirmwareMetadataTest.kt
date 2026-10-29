@@ -100,6 +100,21 @@ class FirmwareMetadataTest {
         }
     }
 
+    @Test fun invalidBannerBeforeValidBannerIsIgnored() {
+        val invalid = "Linux version definitely-not-a-release (noise)\u0000".toByteArray()
+        assertEquals("6.1.118-test", FirmwareMetadata.kernelBanner(invalid + banner))
+    }
+
+    @Test fun repeatedCopiesOfTheSameKernelReleaseAreAccepted() {
+        assertEquals("6.1.118-test", FirmwareMetadata.kernelBanner(banner + ByteArray(64) + banner))
+    }
+
+    @Test fun conflictingValidKernelReleasesStayUnknown() {
+        val other = "Linux version 6.6.66-other (builder@test) #2 SMP\u0000".toByteArray()
+        assertEquals("", FirmwareMetadata.kernelBanner(banner + ByteArray(64) + other))
+        assertEquals("", FirmwareMetadata.kernelBanner(other + ByteArray(64) + banner))
+    }
+
     @Test fun ramdiskBannerDoesNotBecomeKernelVersion() {
         val image = bootImage(4, ByteArray(256)) + banner
         assertEquals("", FirmwareMetadata.fromBootImage(image).kernelVersion)

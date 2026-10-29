@@ -14,6 +14,7 @@ import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.StandardOpenOption
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * A random-access, **stateless** byte source.
@@ -206,6 +207,8 @@ class HttpSource private constructor(
     private val fileName: String,
 ) : PayloadSource {
 
+    private val preferredChunkBytes = AtomicInteger(CHUNK_BYTES)
+
     override fun fileName(): String = fileName
 
     /**
@@ -221,15 +224,17 @@ class HttpSource private constructor(
         if (len == 0) return
         var pos = offset
         var left = len
-        var attempt = 0
-        var chunkLimit = CHUNK_BYTES
-        // Some firmware CDNs close a large Range response early while still advertising the
-        // full Content-Length. Reads are therefore split into bounded chunks: a short chunk is
-        // resumed at the first missing byte, and a chunk that yields nothing is retried with
-        // backoff and a smaller window. The caller still receives exactly [len] bytes or an
-        // exception; a truncated body is never reported as success.
+        var emptyAttempts = 0
+        var transportAttempts = 0
+        var chunkLimit = preferredChunkBytes.get()
+        // Some firmware CDNs close a Range response early while still advertising the full
+        // Content-Range/Content-Length. Preserve a proven identity prefix and continue at the
+        // first missing byte. If a response yields no bytes, fall back quickly to a small range
+        // and remember that limit for every later read from this source; otherwise every boot
+        // operation would repeat the same multi-minute failure ladder.
         while (left > 0) {
-            val chunk = minOf(left, chunkLimit).toInt()
+            chunkLimit = minOf(chunkLimit, preferredChunkBytes.get())
+            val chunk = minOf(left, chunkLimit)
             val end = pos + chunk - 1
             val req = Request.Builder().url(url)
                 .header("Range", "bytes=$pos-$end")
@@ -242,56 +247,78 @@ class HttpSource private constructor(
                     validateRange(resp, pos, end, size)
                     val body = resp.body ?: throw IOException("Empty body")
                     val decoded = decodeRangeBody(body, resp.header("Content-Encoding"), chunk.toLong())
-                    if (decoded.encoded) {
-                        // A CDN may gzip each range independently. The decoded length must be
-                        // exactly the requested range, otherwise the bytes cannot be positioned.
-                        read = readExact(decoded.stream, buffer, bufOffset + (pos - offset).toInt(), chunk, pos)
-                        if (decoded.stream.read() != -1) {
-                            throw java.net.ProtocolException(
-                                "Compressed HTTP range decoded beyond the requested $chunk bytes at $pos"
-                            )
-                        }
-                    } else {
-                        if (body.contentLength() >= 0 && body.contentLength() != chunk.toLong()) {
-                            throw IOException("HTTP range body length mismatch")
-                        }
-                        read = readExact(decoded.stream, buffer, bufOffset + (pos - offset).toInt(), chunk, pos)
+                    if (!decoded.encoded && body.contentLength() > chunk.toLong()) {
+                        throw java.net.ProtocolException("HTTP range body exceeds requested length")
+                    }
+                    read = readExact(
+                        decoded.stream,
+                        buffer,
+                        bufOffset + (pos - offset).toInt(),
+                        chunk,
+                        pos,
+                        resumable = !decoded.encoded,
+                    )
+                    if (decoded.encoded && decoded.stream.read() != -1) {
+                        throw java.net.ProtocolException(
+                            "Compressed HTTP range decoded beyond the requested $chunk bytes at $pos"
+                        )
                     }
                 }
                 pos += read
                 left -= read
-                attempt = 0
+                emptyAttempts = 0
+                transportAttempts = 0
             } catch (e: ShortReadException) {
-                val got = e.read
-                pos += got
-                left -= got
+                val got = if (e.resumable) e.read else 0
                 if (got > 0) {
-                    attempt = 0
+                    // A validated identity Range is ordered bytes beginning exactly at `pos`.
+                    // Keep that prefix, then request only the missing suffix.
+                    pos += got
+                    left -= got
+                    chunkLimit = lowerChunkLimit(maxOf(MIN_CHUNK_BYTES, minOf(chunkLimit, got)))
+                    emptyAttempts = 0
+                    transportAttempts = 0
                 } else {
-                    attempt++
-                    if (attempt >= MAX_RETRIES) throw e
-                    chunkLimit = maxOf(MIN_CHUNK_BYTES, chunkLimit / 2)
-                    Thread.sleep(RETRY_DELAY_MS * attempt)
+                    if (++emptyAttempts > MAX_EMPTY_RETRIES) throw e
+                    val fallback = if (chunkLimit > FALLBACK_CHUNK_BYTES) {
+                        FALLBACK_CHUNK_BYTES
+                    } else {
+                        maxOf(MIN_CHUNK_BYTES, chunkLimit / 2)
+                    }
+                    chunkLimit = lowerChunkLimit(fallback)
+                    Thread.sleep(RETRY_DELAY_MS * emptyAttempts)
                 }
             } catch (e: IOException) {
-                // A protocol violation cannot be repaired by writing bytes from offset zero.
-                if (e is java.net.ProtocolException && e !is ShortReadException) throw e
-                if (++attempt >= MAX_RETRIES) throw e
-                Thread.sleep(RETRY_DELAY_MS * attempt)
+                // A malformed range cannot be repaired by retrying it as though it were bytes 0..N.
+                if (e is java.net.ProtocolException) throw e
+                if (++transportAttempts >= MAX_TRANSPORT_RETRIES) throw e
+                Thread.sleep(RETRY_DELAY_MS * transportAttempts)
             }
+        }
+    }
+
+    private fun lowerChunkLimit(candidate: Int): Int {
+        val bounded = candidate.coerceIn(MIN_CHUNK_BYTES, CHUNK_BYTES)
+        while (true) {
+            val current = preferredChunkBytes.get()
+            if (current <= bounded) return current
+            if (preferredChunkBytes.compareAndSet(current, bounded)) return bounded
         }
     }
 
     override fun close() { /* OkHttp responses are closed per-request */ }
 
     companion object {
-        private const val MAX_RETRIES = 3
+        private const val MAX_TRANSPORT_RETRIES = 3
+        private const val MAX_EMPTY_RETRIES = 4
         private const val RETRY_DELAY_MS = 400L
         private const val CHUNK_BYTES = 256 * 1024
+        private const val FALLBACK_CHUNK_BYTES = 32 * 1024
         private const val MIN_CHUNK_BYTES = 16 * 1024
 
         private class ShortReadException(
             val read: Int,
+            val resumable: Boolean,
             message: String,
             cause: Throwable? = null,
         ) : IOException(message, cause)
@@ -362,15 +389,23 @@ class HttpSource private constructor(
             bufOffset: Int,
             len: Int,
             offset: Long,
+            resumable: Boolean,
         ): Int {
             var read = 0
             while (read < len) {
                 val n = try {
                     stream.read(buffer, bufOffset + read, len - read)
                 } catch (e: IOException) {
-                    throw ShortReadException(read, "Short read: got $read of $len at $offset", e)
+                    throw ShortReadException(
+                        read,
+                        resumable,
+                        "Short read: got $read of $len at $offset",
+                        e,
+                    )
                 }
-                if (n <= 0) throw ShortReadException(read, "Short read: got $read of $len at $offset")
+                if (n <= 0) {
+                    throw ShortReadException(read, resumable, "Short read: got $read of $len at $offset")
+                }
                 read += n
             }
             return read
