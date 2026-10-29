@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Only the local main workbench can use the Flux command whitelist and subscribe to events.",
+  "local": true,
+  "webviews": ["main"],
+  "permissions": [
+    "allow-flux-invoke",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

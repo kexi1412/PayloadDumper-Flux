@@ -1,7 +1,6 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { EngineClient } = require('../electron/engine-client.cjs');
@@ -15,9 +14,16 @@ const output = path.join(temp, 'outputs');
 const javaName = process.platform === 'win32' ? 'java.exe' : 'java';
 const bundled = path.join(root, 'runtime/bin', javaName);
 const java = process.env.FLUX_JAVA || (fs.existsSync(bundled) ? bundled : process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin', javaName) : javaName);
-const jar = path.join(root, 'engine/build/libs/flux-engine.jar');
-const client = new EngineClient({ command: java, args: [`-Dflux.cacheDir=${path.join(temp, 'cache')}`, '-jar', jar], cwd: root });
-const options = { workers: 4, verify: true, userAgent: 'Flux-PC-Smoke/1' };
+const jar = process.env.FLUX_ENGINE_JAR || path.join(root, 'engine/build/libs/flux-engine.jar');
+const legacy = process.env.FLUX_JVM_TEST === '1';
+const native = process.env.FLUX_ENGINE_BIN || path.join(root, 'native-engine/target/release', process.platform === 'win32' ? 'flux-native-engine.exe' : 'flux-native-engine');
+const packaged = process.env.FLUX_ENGINE_PACKAGED === '1';
+const client = new EngineClient({
+  command: legacy ? java : native,
+  args: legacy ? [`-Dflux.cacheDir=${path.join(temp, 'cache')}`, '-jar', jar] : packaged ? ['--engine'] : [],
+  env: { ...process.env, FLUX_CACHE_DIR: path.join(temp, 'cache') }, cwd: root,
+});
+const options = { workers: 4, verify: true, userAgent: 'Flux-PC-Smoke/2' };
 const logs = [];
 client.on('log', entry => logs.push(entry));
 function nextState(predicate, timeout = 30000) {
@@ -52,9 +58,9 @@ function verifyFiles(directory, expected) {
 async function main() {
   let server;
   try {
-    assert(fs.existsSync(jar), 'Build the JVM engine before running integration tests.');
+    assert(fs.existsSync(legacy ? jar : native), legacy ? 'Build the reference JVM engine.' : 'Build the native engine or select FLUX_ENGINE_BIN.');
     await client.start();
-    let parsed = await parse({ kind: 'file', value: fixtures.standard.path });
+    const parsed = await parse({ kind: 'file', value: fixtures.standard.path });
     assert.equal(parsed.partitions.length, 4);
     assert.equal(parsed.archive.androidVersion, '16');
     assert.equal(parsed.archive.securityPatchLevel, '2026-10-01');
@@ -67,7 +73,7 @@ async function main() {
     finished = await extract();
     assert(finished.partitions.every(p => p.extractState === 'DONE' && p.verifyState === 'PASSED'), JSON.stringify(finished));
     verifyFiles(finished.outputDir, fixtures.selfContained.expected);
-    console.log('PASS non-zero minor / self-contained full partition / exact SHA-256');
+    console.log('PASS minor 9 / self-contained REPLACE / unused src_length / SHA-256');
 
     await parse({ kind: 'file', value: fixtures.raw.path });
     finished = await extract();
@@ -79,7 +85,7 @@ async function main() {
     finished = await extract();
     assert(finished.partitions.every(p => p.extractState === 'DONE'), JSON.stringify(finished));
     verifyFiles(path.join(finished.outputDir, 'update_sd_base'), fixtures.nested.expected);
-    console.log('PASS nested ZIP / batched stream / exact output');
+    console.log('PASS nested ZIP / isolated inner archive / exact output');
 
     await parse({ kind: 'file', value: fixtures.bad.path });
     finished = await extract();
@@ -92,10 +98,14 @@ async function main() {
     console.log('PASS genuine SOURCE_COPY / minor zero / rejected before image creation');
 
     const agents = new Set();
+    let network = fixtures.large.buffer;
+    let deniedReads = 0;
     server = http.createServer((req, res) => {
       agents.add(req.headers['user-agent']);
-      const data = fixtures.large.buffer;
-      const common = { 'Accept-Ranges': 'bytes', 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="network-fixture.zip"' };
+      if (req.url === '/gone') { deniedReads++; res.writeHead(403); res.end(); return; }
+      const data = req.url === '/extensionless' ? fixtures.direct.buffer : network;
+      const common = { 'Accept-Ranges': 'bytes', 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="network-fixture"' };
+      if (req.url === '/wrong-range') { res.writeHead(200, { ...common, 'Content-Length': 4 }); res.end(data.subarray(0, 4)); return; }
       if (req.method === 'HEAD') { res.writeHead(200, { ...common, 'Content-Length': data.length }); res.end(); return; }
       const range = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range || '');
       if (!range) { res.writeHead(400); res.end(); return; }
@@ -108,7 +118,8 @@ async function main() {
       }, last - first >= 4095 ? 35 : 0);
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    const url = `http://127.0.0.1:${server.address().port}/firmware.zip`;
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const url = origin + '/firmware.zip';
     await parse({ kind: 'url', value: url });
     const progress = nextState(s => s.phase === 'extracting' && s.partitions.some(p => p.extractState === 'RUNNING' && p.progress > 0 && p.progress < 1));
     await client.request('extract', { partitions: ['system'], outputDir: output, options });
@@ -117,11 +128,35 @@ async function main() {
     await client.request('cancel');
     const pauseState = await paused;
     assert(pauseState.partitions.some(p => p.extractState === 'PAUSED'), JSON.stringify(pauseState));
+    const partialPath = path.join(pauseState.outputDir, 'system.img');
+    const partialSha = sha(fs.readFileSync(partialPath)).toString('hex');
+    network = fixtures.largeChanged.buffer;
+    finished = await extract();
+    assert.equal(finished.phase, 'error', JSON.stringify(finished));
+    assert.equal(sha(fs.readFileSync(partialPath)).toString('hex'), partialSha, 'Changed manifest must not mutate the paused image');
+    console.log('PASS paused source replacement / full-manifest identity mismatch / old bytes untouched');
+    network = fixtures.large.buffer;
+    await parse({ kind: 'url', value: url });
     finished = await extract();
     assert(finished.partitions.every(p => p.extractState === 'DONE' && p.verifyState === 'PASSED'), JSON.stringify(finished));
     verifyFiles(finished.outputDir, fixtures.large.expected);
     assert(agents.has(options.userAgent));
     console.log('PASS HTTP Range / custom UA / cancellation / identity-bound resume / SHA-256');
+
+    await parse({ kind: 'url', value: origin + '/extensionless' });
+    finished = await extract();
+    assert(finished.partitions.every(p => p.extractState === 'DONE' && p.verifyState === 'PASSED'), JSON.stringify(finished));
+    verifyFiles(finished.outputDir, fixtures.direct.expected);
+    console.log('PASS extensionless raw payload / magic detection / nonzero minor / SHA-256');
+    for (const route of ['/wrong-range', '/gone']) {
+      const failed = nextState(s => s.phase === 'error');
+      await client.request('parse', { source: { kind: 'url', value: origin + route }, outputDir: output, options });
+      const state = await failed;
+      assert(state.detail, JSON.stringify(state));
+      if (route === '/gone') assert.match(state.detail, /403/);
+    }
+    assert.equal(deniedReads, 1, 'Permanent 403 must stop after its first failed request');
+    console.log('PASS ignored Range rejected / HTTP 403 provenance / permanent failures not retried');
     await client.request('reset');
     assert.equal(client.state.phase, 'idle');
     console.log('PASS reset / shutdown');

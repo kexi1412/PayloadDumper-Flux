@@ -1,8 +1,8 @@
 # Payload Dumper · Flux — Android + PC
 
-Android、PC、功能和历史修复分支已合并到 **`main`**。安卓与 Windows x64 桌面版共用同一 Kotlin 提取核心；桌面端保留 new-api 风格工作台，原分支保留历史、不再分散维护。
+仓库现在只保留 **`main`**，原有分支的提交历史均已合并，冗余本地与远端分支已删除。Android 保留 Kotlin 提取实现；Windows 轻量版改为系统 WebView2 + 原生 Rust 引擎，并用同一组真实固件夹具及哈希回归核对，保留 new-api 风格工作台。
 
-当前修复：按实际操作而非 minor 版本号判断是否需要旧镜像；安卓暗色卡片使用不透明背景，输入框边框在各状态均可见。Android 3.0.6，PC 3.1.0-pc.2。
+当前版本：Android 3.0.6，PC 3.2.0-pc.1。原生 PC 安装包和便携 ZIP 都以 **小于 10,000,000 字节**为构建门槛，不捆绑或再下载 Chromium / Java。系统 WebView2 使用 Windows 已有组件。
 
 **[PC 使用与构建说明](<desktop/README.md>)** · **[Windows 自动构建](<.github/workflows/build-pc.yml>)**
 
@@ -16,7 +16,7 @@ Android、PC、功能和历史修复分支已合并到 **`main`**。安卓与 Wi
 
 在 Android 本机提取固件镜像，支持**系统选择本地文件**和 HTTP OTA 下载直链。
 
-![Version](https://img.shields.io/badge/Version-3.0.0-0080FF)
+![Version](https://img.shields.io/badge/Version-3.0.6-0080FF)
 ![Platform](https://img.shields.io/badge/Android-11%2B-3DDC84?logo=android&logoColor=white)
 ![UI](https://img.shields.io/badge/UI-COUI17%20%2F%20Compose-0080FF)
 ![Build](https://github.com/kexi1412/PayloadDumper-Flux/actions/workflows/build.yml/badge.svg)

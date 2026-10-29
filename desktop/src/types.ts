@@ -94,5 +94,7 @@ export interface DesktopBridge {
   onState(callback: (state: EngineState) => void): () => void;
   onLog(callback: (entry: LogEntry) => void): () => void;
   onHistory(callback: (entries: HistoryEntry[]) => void): () => void;
+  /** Native paths are stat-validated by Rust; never infer them from DOM File.name. */
+  onFileDrop?(callback: (file: LocalFile) => void, onError?: (error: unknown) => void): () => void;
 }
 declare global { interface Window { flux?: DesktopBridge } }

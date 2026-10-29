@@ -42,6 +42,21 @@ export default function App() {
   const theme = desktop.preferences?.theme ?? 'system';
   useDocumentTheme(theme);
 
+  const nativeDropRef = useRef({ desktop, source });
+  nativeDropRef.current = { desktop, source };
+  useEffect(() => desktop.bridge?.onFileDrop?.((file) => {
+    const { desktop: current, source: selected } = nativeDropRef.current;
+    if (current.busy || current.dialogBusy || current.initialLoading || current.savingPreferences || current.sourceResetting) {
+      current.notify('来源已锁定，请等待当前操作结束后重新拖入固件。', 'error');
+      return;
+    }
+    if (selected.mode !== 'file' || selected.file?.path !== file.path || selected.file?.size !== file.size) void current.invalidateSource();
+    setSource((value) => ({ ...value, mode: 'file', file }));
+    setPage('workbench');
+  }, (error) => {
+    nativeDropRef.current.desktop.notify(`拖放文件失败：${error instanceof Error ? error.message : String(error)}`, 'error');
+  }), [desktop.bridge]);
+
   const pickFile = useCallback(async () => {
     if (!desktop.bridge || desktop.busy || desktop.dialogBusy || desktop.initialLoading) return;
     const file = await desktop.pickFile();

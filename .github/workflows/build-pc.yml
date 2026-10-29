@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: pc-${{ github.ref }}
@@ -24,7 +24,9 @@ concurrency:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
+    env:
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -38,47 +40,118 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Install frontend and packaging dependencies
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            desktop/native-engine -> target
+            desktop/src-tauri -> target
+      - name: Install only native-shell frontend dependencies
         run: pnpm --dir desktop install --frozen-lockfile
-      - name: Install verified Electron runtime
-        run: pnpm --dir desktop runtime:install
-      - name: Test desktop IPC
+      - name: Test desktop protocol regressions
         run: pnpm --dir desktop test
-      - name: Test and build shared firmware engine
-        run: pnpm --dir desktop engine:build
-      - name: Create standalone Java runtime
-        run: pnpm --dir desktop runtime:build
-      - name: Verify actual extraction and HTTP resume
-        run: pnpm --dir desktop test:engine
-      - name: Typecheck and build renderer
+      - name: Resolve native dependency lockfiles
+        run: |
+          foreach ($project in @('desktop/native-engine', 'desktop/src-tauri')) {
+            if (!(Test-Path "$project/Cargo.lock")) {
+              cargo generate-lockfile --manifest-path "$project/Cargo.toml"
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+          }
+      - name: Test and build native firmware engine
+        run: |
+          New-Item -ItemType Directory -Force desktop/.cache | Out-Null
+          cargo test --locked --manifest-path desktop/native-engine/Cargo.toml --target x86_64-pc-windows-msvc 2>&1 | Tee-Object desktop/.cache/native-unit-tests.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --locked --release --manifest-path desktop/native-engine/Cargo.toml --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify actual native extraction, hashes and HTTP resume
+        run: |
+          $env:FLUX_ENGINE_BIN = Join-Path $PWD 'desktop/native-engine/target/x86_64-pc-windows-msvc/release/flux-native-engine.exe'
+          pnpm --dir desktop test:engine
+          exit $LASTEXITCODE
+      - name: Build JVM reference and verify the same fixtures
+        run: |
+          pnpm --dir desktop engine:jvm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --dir desktop test:engine:jvm
+          exit $LASTEXITCODE
+      - name: Typecheck and build preserved workbench
         run: pnpm --dir desktop build
-      - name: Verify real Electron UI and responsive layouts
-        run: pnpm --dir desktop test:ui
-      - name: Package Windows portable app
-        run: pnpm --dir desktop package:win
-      - name: Upload Windows portable artifacts
+      - name: Test native shell guards and profile
+        run: |
+          cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --target x86_64-pc-windows-msvc 2>&1 | Tee-Object desktop/.cache/native-shell-tests.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build native current-user Windows installer
+        run: pnpm --dir desktop package:win --target x86_64-pc-windows-msvc -- --locked
+      - name: Enforce both packages below 10 MB
+        run: pnpm --dir desktop verify:package
+      - name: Install the actual package and verify system WebView2 UI
+        run: |
+          $setup = Get-ChildItem desktop/release/*-setup.exe
+          if ($setup.Count -ne 1) { throw 'Expected one validated native installer' }
+          $install = Join-Path $env:RUNNER_TEMP 'FluxNativeInstall'
+          $process = Start-Process -FilePath $setup.FullName -ArgumentList @('/S', "/D=$install") -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
+          $installed = Join-Path $install 'payload-dumper-flux.exe'
+          if (!(Test-Path -LiteralPath $installed)) { throw 'Installed application is missing' }
+          $record = Get-Content desktop/release/native-package.json -Raw | ConvertFrom-Json
+          if ((Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash.ToLowerInvariant() -ne $record.executableSHA256) { throw 'Installer did not deploy the verified native executable' }
+          $env:FLUX_TEST_APP = $installed
+          pnpm --dir desktop test:ui
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:FLUX_ENGINE_BIN = $installed
+          $env:FLUX_ENGINE_PACKAGED = '1'
+          pnpm --dir desktop test:engine
+          exit $LASTEXITCODE
+      - name: Upload compact Windows packages
         uses: actions/upload-artifact@v4
         with:
-          name: PayloadDumper-Flux-PC-Windows-${{ github.run_number }}
+          name: PayloadDumper-Flux-PC-Native-Windows
           path: |
-            desktop/release/*.exe
-            desktop/release/*.zip
+            desktop/release/*-setup.exe
+            desktop/release/*-portable.zip
+            desktop/release/SHA256SUMS-native.txt
+            desktop/release/native-package.json
+            desktop/release/native-release-notes.md
           if-no-files-found: error
-          retention-days: 14
-      - name: Upload desktop UI screenshots
+          retention-days: 30
+      - name: Read native release version
+        id: version
+        run: |
+          $version = (Get-Content desktop/package.json -Raw | ConvertFrom-Json).version
+          "name=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Publish native PC release
+        if: github.event_name == 'push' && !contains(github.event.head_commit.message, '[no-release]')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: pc-v${{ steps.version.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          name: Payload Dumper Flux PC ${{ steps.version.outputs.name }}
+          body_path: desktop/release/native-release-notes.md
+          files: |
+            desktop/release/*-setup.exe
+            desktop/release/*-portable.zip
+            desktop/release/SHA256SUMS-native.txt
+      - name: Upload native UI screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: PayloadDumper-Flux-PC-UI
-          path: desktop/.cache/ui-screenshots-*/*.png
+          name: PayloadDumper-Flux-PC-Native-UI
+          path: desktop/.cache/native-ui-screenshots-*/*.png
           include-hidden-files: true
-          if-no-files-found: error
-      - name: Upload engine test results
+          if-no-files-found: warn
+      - name: Upload native lockfiles and regression evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: PayloadDumper-Flux-PC-test-reports
+          name: PayloadDumper-Flux-PC-Native-reports
           path: |
+            desktop/native-engine/Cargo.lock
+            desktop/src-tauri/Cargo.lock
+            desktop/.cache/native-unit-tests.log
+            desktop/.cache/native-shell-tests.log
             desktop/engine/build/test-results/
             desktop/engine/build/reports/tests/
+          include-hidden-files: true
           if-no-files-found: warn

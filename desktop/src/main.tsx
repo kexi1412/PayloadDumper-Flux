@@ -1,7 +1,10 @@
 import { Component, StrictMode, type ErrorInfo, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { installNativeBridge } from './nativeBridge';
 import './styles.css';
+
+installNativeBridge();
 
 class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };

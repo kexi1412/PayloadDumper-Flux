@@ -1,6 +1,6 @@
 # Payload Dumper · Flux — Android + PC
 
-The `main` branch now contains both **Android** and **Windows x64 desktop** applications. Previous feature, fix, smoke and PC branch histories are merged here. Both apps use the same validated Kotlin firmware extraction core; desktop adds a new-api-inspired workbench.
+The repository now keeps **only `main`**, with every previous feature, fix, smoke and PC branch history merged and retained in that history. Android uses the validated Kotlin extraction core; Windows now uses a compact native Rust engine checked against the same firmware fixtures, plus the preserved new-api-inspired React workbench in system WebView2. Native installers are gated below 10 MB without bundling or downloading Chromium or Java.
 
 **[PC usage and build instructions](<desktop/README.md>)** · **[Windows build workflow](<.github/workflows/build-pc.yml>)**
 

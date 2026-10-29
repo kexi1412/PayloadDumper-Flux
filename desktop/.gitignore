@@ -6,4 +6,7 @@ runtime/
 engine/.gradle/
 engine/.kotlin/
 engine/build/
+native-engine/target/
+src-tauri/target/
+src-tauri/gen/
 *.log

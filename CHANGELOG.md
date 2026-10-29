@@ -1,5 +1,15 @@
 # Changelog
 
+## PC 3.2.0-pc.1 — 2026-10-30
+
+### Native compact release / 原生轻量版
+- Replaced the bundled Electron/Chromium and JVM runtime with a Tauri window using system WebView2 and an in-process Rust firmware engine. The React/new-api-inspired workbench is preserved.
+- Installer and portable ZIP builds are rejected unless each is below 10,000,000 bytes. The installer does not download a hidden browser or Java runtime; it uses the system WebView2 component.
+- Native extraction keeps operation-based full-payload support, blob/partition hashes, strict HTTP ranges, custom User-Agent, exact lengths/CRC and full-manifest-bound resume. Native progress files are distinct from old JVM logs.
+- Windows CI tests both native and JVM implementations against the same generated firmware, then installs the actual package and verifies WebView2 UI extraction and output SHA-256. The installed executable also runs the real worker regressions.
+- Deleted the five merged local and remote feature/fix/PC branches; only `main` remains, with their full histories preserved.
+- Android production source and version remain unchanged; PC-only changes no longer trigger APK republishing.
+
 ## 3.0.6 / PC 3.1.0-pc.2 — 2026-10-30
 
 ### Fixed / 修复

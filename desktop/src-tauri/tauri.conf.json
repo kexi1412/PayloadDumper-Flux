@@ -1,0 +1,62 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Payload Dumper Flux",
+  "version": "3.2.0-pc.1",
+  "identifier": "com.flux.payload.desktop",
+  "mainBinaryName": "payload-dumper-flux",
+  "build": {
+    "beforeDevCommand": "pnpm run dev",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "pnpm run build",
+    "frontendDist": "../dist",
+    "windows": { "staticVCRuntime": true }
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [{
+      "label": "main",
+      "create": false,
+      "title": "Payload Dumper Flux · PC",
+      "url": "index.html",
+      "width": 1440,
+      "height": 1000,
+      "minWidth": 960,
+      "minHeight": 700,
+      "center": true,
+      "resizable": true,
+      "visible": true,
+      "dragDropEnabled": true,
+      "backgroundColor": "#f7f8fa"
+    }],
+    "security": {
+      "capabilities": ["desktop"],
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src ipc: http://ipc.localhost https://ipc.localhost; object-src 'none'; base-uri 'self'; frame-src 'none'; frame-ancestors 'none'; form-action 'none'; worker-src 'none'",
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost ws://127.0.0.1:5173; object-src 'none'; base-uri 'self'; frame-src 'none'; frame-ancestors 'none'; form-action 'none'; worker-src 'none'",
+      "assetProtocol": { "enable": false, "scope": [] },
+      "headers": {
+        "X-Content-Type-Options": "nosniff",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=(), usb=(), serial=(), bluetooth=(), payment=()"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["../assets/icon.ico"],
+    "category": "Utility",
+    "shortDescription": "Android firmware extraction workbench",
+    "copyright": "Copyright © Payload Dumper Flux contributors",
+    "windows": {
+      "webviewInstallMode": { "type": "skip" },
+      "bundleVCRuntime": false,
+      "nsis": {
+        "installMode": "currentUser",
+        "compression": "lzma",
+        "installerIcon": "../assets/icon.ico",
+        "uninstallerIcon": "../assets/icon.ico",
+        "displayLanguageSelector": false,
+        "languages": ["SimpChinese", "English"]
+      }
+    }
+  }
+}
