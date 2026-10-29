@@ -130,10 +130,13 @@ class HttpMetadataScopeTest {
             server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
             server.enqueue(response(0..0))
             server.enqueue(response(100..131))
-            server.start()
+            // This tests HttpSource's retry, not localhost IPv4/IPv6 fallback. A timed-out
+            // route plus retryOnConnectionFailure(false) can select unbound ::1 on CI.
+            server.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
+            val url = server.url("/ota.zip").newBuilder().host("127.0.0.1").build()
             val client = OkHttpClient.Builder().retryOnConnectionFailure(false)
-                .readTimeout(100, TimeUnit.MILLISECONDS).build()
-            HttpSource.open(server.url("/ota.zip").toString(), client).use { source ->
+                .readTimeout(1, TimeUnit.SECONDS).build()
+            HttpSource.open(url.toString(), client).use { source ->
                 assertEquals(body.size.toLong(), source.size)
                 assertArrayEquals(body.copyOfRange(100, 132), source.readFully(100, 32))
             }
