@@ -63,7 +63,7 @@ jobs:
             status=0;
             ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace || status=$?;
             mkdir -p ui-screenshots;
-            adb pull /sdcard/Android/data/com.flux.payload.dumper.debug/files/theme-regression ui-screenshots/ || true;
+            adb pull /sdcard/Pictures/FluxThemeRegression ui-screenshots/ || true;
             exit "$status"
 
       - name: Upload Android UI screenshots

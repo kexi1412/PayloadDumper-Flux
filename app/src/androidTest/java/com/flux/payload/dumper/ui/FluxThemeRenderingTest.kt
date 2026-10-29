@@ -1,7 +1,12 @@
 package com.flux.payload.dumper.ui
 
+import android.content.ContentValues
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.os.Environment
+import android.provider.MediaStore
+import android.util.Log
+import android.view.View
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
@@ -17,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PixelMap
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -25,7 +31,10 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertHeightIsEqualTo
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.captureToImage
@@ -36,6 +45,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.platform.graphics.HardwareRendererCompat
 import com.flux.payload.dumper.R
 import com.flux.payload.dumper.model.SourceMode
 import com.flux.payload.dumper.model.SourceSelection
@@ -53,7 +63,10 @@ import com.flux.payload.dumper.ui.theme.LightFlux
 import com.flux.payload.dumper.ui.theme.LightSurface
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
 import com.flux.payload.dumper.ui.theme.PayloadDumperFluxTheme
-import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.roundToInt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -92,15 +105,50 @@ class FluxThemeRenderingTest {
     }
 
     @Test fun darkCardPaintDoesNotShowContrastingContentBehindIt() {
+        var backdrop by mutableStateOf(Color.Magenta)
+        lateinit var composeView: View
+        var insetPx = 0
+        val cardDraws = AtomicInteger()
         compose.setContent {
             PayloadDumperFluxTheme(darkTheme = true) {
-                Box(Modifier.fillMaxSize().background(Color.Magenta).padding(24.dp)) {
-                    CardGroup(Modifier.testTag("opaque_card")) { Spacer(Modifier.height(72.dp)) }
+                val view = LocalView.current
+                val inset = with(LocalDensity.current) { 8.dp.roundToPx() }
+                SideEffect { composeView = view; insetPx = inset }
+                Box(
+                    Modifier.fillMaxSize().testTag("card_backdrop")
+                        .background(backdrop).padding(24.dp),
+                ) {
+                    CardGroup(
+                        Modifier.testTag("opaque_card").drawWithContent {
+                            drawContent()
+                            cardDraws.incrementAndGet()
+                        },
+                    ) { Spacer(Modifier.height(72.dp)) }
                 }
             }
         }
-        val pixels = capturePixels("opaque_card", "card-dark")
-        assertPixel(DarkFlux.card, pixels[pixels.width / 2, pixels.height / 2])
+        fun assertCard(expectedBackdrop: Color, suffix: String) {
+            // Capture uses node coordinates from BEFORE its own decorView redraw. For a
+            // brand-new, otherwise empty composition, first commit the actual Compose View
+            // so those coordinates and retained graphics layers belong to the rendered frame.
+            compose.waitForIdle()
+            awaitCommittedComposeFrame(composeView)
+            val card = compose.onNodeWithTag("opaque_card").assertIsDisplayed().assertHeightIsEqualTo(72.dp)
+            assertTrue("CardGroup's drawContent was never called", cardDraws.get() > 0)
+            val cardBounds = card.fetchSemanticsNode().boundsInRoot
+            val backdropBounds = compose.onNodeWithTag("card_backdrop").fetchSemanticsNode().boundsInRoot
+            Log.i("FluxThemeRegression", "card=$cardBounds backdrop=$backdropBounds draws=${cardDraws.get()}")
+            val fullFrame = capturePixels("card_backdrop", "card-frame-$suffix")
+            assertPixel(expectedBackdrop, fullFrame[fullFrame.width / 2, insetPx])
+            val centerX = (cardBounds.center.x - backdropBounds.left).roundToInt()
+            val centerY = (cardBounds.center.y - backdropBounds.top).roundToInt()
+            assertPixel(DarkFlux.card, fullFrame[centerX, centerY])
+            val pixels = capturePixels("opaque_card", "card-dark-$suffix")
+            assertPixel(DarkFlux.card, pixels[pixels.width / 2, pixels.height / 2])
+        }
+        assertCard(Color.Magenta, "magenta")
+        compose.runOnIdle { backdrop = Color.Cyan }
+        assertCard(Color.Cyan, "cyan")
     }
 
     @Test fun openDialogRepaintsItsOpaqueBodyWhenSystemThemeChanges() {
@@ -210,23 +258,60 @@ class FluxThemeRenderingTest {
         }
     }
 
+    private fun awaitCommittedComposeFrame(view: View) {
+        val drawingWasEnabled = HardwareRendererCompat.isDrawingEnabled()
+        try {
+            HardwareRendererCompat.setDrawingEnabled(true)
+            val committed = CountDownLatch(1)
+            compose.runOnUiThread {
+                check(view.isAttachedToWindow && view.isHardwareAccelerated)
+                view.viewTreeObserver.registerFrameCommitCallback { committed.countDown() }
+                // Invalidate AndroidComposeView itself, not only the window's decorView.
+                view.invalidate()
+            }
+            assertTrue("The Compose View did not commit a rendered frame", committed.await(5, TimeUnit.SECONDS))
+        } finally {
+            HardwareRendererCompat.setDrawingEnabled(drawingWasEnabled)
+        }
+    }
+
     private fun capturePixels(tag: String, name: String): PixelMap {
         val image = compose.onNodeWithTag(tag).captureToImage()
-        // CI can adb pull /sdcard/Android/data/com.flux.payload.dumper.debug/files/theme-regression.
-        // Capture before asserting so failures retain the actual rendered pixels as well.
-        val directory = File(context.getExternalFilesDir(null) ?: context.filesDir, "theme-regression")
-        check(directory.isDirectory || directory.mkdirs()) { "Cannot create screenshot directory: $directory" }
-        File(directory, "$name.png").outputStream().use { output ->
-            check(image.asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, output))
+        // UTP uninstalls the target after connected tests and removes app-specific files.
+        // Published MediaStore images survive that cleanup; no storage permission is needed
+        // to create our own images on API 30+. CI pulls /sdcard/Pictures/FluxThemeRegression.
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "$name.png")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/FluxThemeRegression/")
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+        val uri = checkNotNull(resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)) {
+            "Cannot create screenshot $name"
+        }
+        var published = false
+        try {
+            checkNotNull(resolver.openOutputStream(uri, "w")).use { output ->
+                check(image.asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, output))
+            }
+            val complete = ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }
+            check(resolver.update(uri, complete, null, null) == 1) { "Cannot publish screenshot $uri" }
+            published = true
+            Log.i("FluxThemeRegression", "Saved $name.png ${image.width}x${image.height} at $uri")
+        } finally {
+            // Only discard the new pending row if its write failed, never previous evidence.
+            if (!published) resolver.delete(uri, null, null)
         }
         return image.toPixelMap()
     }
 
     private fun assertPixel(expected: Color, actual: Color) {
-        assertEquals("Surface alpha", 1f, actual.alpha, 0.01f)
-        assertEquals("Surface red", expected.red, actual.red, 2f / 255f)
-        assertEquals("Surface green", expected.green, actual.green, 2f / 255f)
-        assertEquals("Surface blue", expected.blue, actual.blue, 2f / 255f)
+        val detail = "expected=%08X actual=%08X".format(expected.toArgb(), actual.toArgb())
+        assertEquals("Surface alpha ($detail)", 1f, actual.alpha, 0.01f)
+        assertEquals("Surface red ($detail)", expected.red, actual.red, 2f / 255f)
+        assertEquals("Surface green ($detail)", expected.green, actual.green, 2f / 255f)
+        assertEquals("Surface blue ($detail)", expected.blue, actual.blue, 2f / 255f)
     }
 }
 

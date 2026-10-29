@@ -70,8 +70,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: PayloadDumper-Flux-PC-UI
-          path: desktop/.cache/ui-screenshots-*/
-          if-no-files-found: warn
+          path: desktop/.cache/ui-screenshots-*/*.png
+          include-hidden-files: true
+          if-no-files-found: error
       - name: Upload engine test results
         if: always()
         uses: actions/upload-artifact@v4
