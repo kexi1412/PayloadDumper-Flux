@@ -1,0 +1,63 @@
+{
+  "name": "payload-dumper-flux-desktop",
+  "version": "3.1.0-pc.1",
+  "description": "Payload Dumper Flux desktop firmware extraction workbench",
+  "private": true,
+  "main": "electron/main.cjs",
+  "author": "Payload Dumper Flux contributors",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@10.28.2",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build",
+    "runtime:install": "node node_modules/electron/install.js",
+    "start": "electron .",
+    "test": "node --test tests/*.test.cjs",
+    "test:engine": "node tests/engine-smoke.cjs",
+    "test:ui": "node tests/ui-smoke.cjs",
+    "engine:build": "node scripts/build-engine.cjs",
+    "runtime:build": "node scripts/build-runtime.cjs",
+    "package:win": "node scripts/package.cjs"
+  },
+  "devDependencies": {
+    "lucide-react": "0.468.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "@types/react": "18.3.18",
+    "@types/react-dom": "18.3.5",
+    "electron": "45.1.0",
+    "electron-builder": "26.18.0",
+    "puppeteer-core": "25.14.0",
+    "typescript": "5.7.3",
+    "vite": "6.3.5"
+  },
+  "build": {
+    "appId": "com.flux.payload.desktop",
+    "productName": "Payload Dumper Flux",
+    "copyright": "Copyright © Payload Dumper Flux contributors",
+    "directories": { "output": "release", "buildResources": "assets" },
+    "files": ["dist/**", "electron/**", "assets/icon.png", "package.json"],
+    "extraResources": [
+      { "from": "engine/build/libs/flux-engine.jar", "to": "engine/flux-engine.jar" },
+      { "from": "runtime", "to": "runtime" },
+      { "from": "../LICENSE", "to": "LICENSE.txt" }
+    ],
+    "asar": true,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "onlyLoadAppFromAsar": true,
+      "enableEmbeddedAsarIntegrityValidation": true
+    },
+    "electronDist": "node_modules/electron/dist",
+    "artifactName": "PayloadDumper-Flux-PC-${version}-${arch}.${ext}",
+    "win": {
+      "target": [{ "target": "portable", "arch": ["x64"] }, { "target": "zip", "arch": ["x64"] }],
+      "icon": "assets/icon.ico",
+      "signExecutable": false
+    },
+    "portable": { "requestExecutionLevel": "user" }
+  }
+}

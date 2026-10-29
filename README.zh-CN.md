@@ -1,3 +1,11 @@
+# Payload Dumper · Flux — PC 分支
+
+当前 `pc` 分支新增 **Windows x64 桌面版**：参考 new-api 的控制台布局，支持本地 / HTTP 固件、分区表格、真实提取进度和亮暗主题，复用原 Kotlin 提取引擎。Android 版原有内容和分支保留。
+
+**[PC 使用与构建说明](<desktop/README.md>)** · **[Windows 自动构建](<.github/workflows/build-pc.yml>)**
+
+---
+
 <div align="center">
 
 # Payload Dumper · Flux

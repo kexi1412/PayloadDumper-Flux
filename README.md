@@ -1,3 +1,11 @@
+# Payload Dumper · Flux — PC branch
+
+This `pc` branch adds a **Windows x64 desktop application** with a new-api-inspired workbench, local/HTTP firmware sources, live extraction progress and the shared Kotlin firmware engine. Android remains available below and on the original branches.
+
+**[PC usage and build instructions](<desktop/README.md>)** · **[Windows build workflow](<.github/workflows/build-pc.yml>)**
+
+---
+
 <div align="center">
 
 # Payload Dumper · Flux
