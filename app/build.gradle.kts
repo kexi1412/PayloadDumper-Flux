@@ -15,9 +15,9 @@ android {
         applicationId = "com.flux.payload.dumper"
         minSdk = 30
         targetSdk = 35
-        // COUI17 + firmware information release.
-        versionCode = 35
-        versionName = "3.0.5"
+        // Shared Android/desktop extraction fixes and opaque dark-mode surfaces.
+        versionCode = 36
+        versionName = "3.0.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
     }

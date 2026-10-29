@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.0.6 / PC 3.1.0-pc.2 — 2026-10-30
+
+### Fixed / 修复
+- Extraction no longer rejects an entire selected partition merely because `minor_version` is non-zero. Supported self-contained REPLACE/BZ/XZ/ZERO/DISCARD operations are extracted and verified; actual old-image dependencies are rejected before output with their operation index and type. Unused `src_length` metadata on REPLACE is not misclassified as a dependency.
+- Kernel metadata uses the same operation compatibility rules instead of guessing unknown operation decoders.
+- Dark cards now paint opaque resolved surfaces instead of OEM translucent overlays. Outlined inputs have explicit opaque fills and visible focused, unfocused, disabled and error borders; dialogs retain their opaque body and normal transparent outer corners.
+- Added non-zero-minor extraction/hash regressions, genuine source-dependent delta fixtures, theme token tests, and actual Android card/dialog/input pixel tests across light/dark transitions.
+
+### Integration / 整合
+- All existing feature, fix, smoke and PC branch histories are merged into `main`. Android and Windows now build from the same shared core on `main`.
+- Android release signing is gated by emulator UI tests; Windows CI also checks the actual Electron UI before packaging.
+
 ## 3.0.5 — 2026-10-30
 
 ### Fixed / 修复

@@ -45,6 +45,35 @@ jobs:
       - name: Test, lint and build
         run: ./gradlew testDebugUnitTest lintDebug assembleDebugAndroidTest assembleRelease --no-daemon --stacktrace
 
+      - name: Enable emulator hardware acceleration
+        run: |
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+
+      - name: Verify Android theme and dialogs on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: >-
+            status=0;
+            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace || status=$?;
+            mkdir -p ui-screenshots;
+            adb pull /sdcard/Android/data/com.flux.payload.dumper.debug/files/theme-regression ui-screenshots/ || true;
+            exit "$status"
+
+      - name: Upload Android UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PayloadDumper-Flux-Android-UI
+          path: ui-screenshots/
+          if-no-files-found: warn
+
       - name: Upload test and lint reports
         if: always()
         uses: actions/upload-artifact@v4
