@@ -231,6 +231,58 @@ fn controller_source_rejection_creates_no_output_and_sink_can_reenter_snapshot()
     assert!(state["partitions"][0]["message"].as_str().unwrap().contains("SOURCE_COPY(4)")); assert!(!output.exists());
     controller.shutdown();
 }
+// A complete serialized ZIP with one STORED image. The overlap case declares one
+// extra byte belonging to the central signature, and even gives that byte a matching
+// CRC: source-size, local/central agreement and CRC alone cannot prove ZIP boundaries.
+fn stored_zip_fixture(local_extra: u16,overlap: u32) -> (Vec<u8>,u64,Vec<u8>) {
+    assert!(overlap <= 4);
+    let name = b"boot.img"; let actual = vec![0x11u8,0x22,0x33,0x44];
+    let declared = actual.len() as u32+overlap;
+    let mut advertised = actual.clone(); advertised.extend_from_slice(&[0x50u8,0x4b,0x01,0x02][..overlap as usize]);
+    let mut checksum = crc32fast::Hasher::new(); checksum.update(&advertised); let crc = checksum.finalize();
+    let mut local = vec![0u8;30]; local[0..4].copy_from_slice(&0x04034b50u32.to_le_bytes()); local[4..6].copy_from_slice(&20u16.to_le_bytes());
+    local[6..8].copy_from_slice(&0x800u16.to_le_bytes()); local[14..18].copy_from_slice(&crc.to_le_bytes());
+    local[18..22].copy_from_slice(&declared.to_le_bytes()); local[22..26].copy_from_slice(&declared.to_le_bytes());
+    local[26..28].copy_from_slice(&(name.len() as u16).to_le_bytes()); local[28..30].copy_from_slice(&local_extra.to_le_bytes());
+    let cd_start = (local.len()+name.len()+actual.len()) as u64;
+    let mut central = vec![0u8;46]; central[0..4].copy_from_slice(&0x02014b50u32.to_le_bytes());
+    central[4..6].copy_from_slice(&20u16.to_le_bytes()); central[6..8].copy_from_slice(&20u16.to_le_bytes());
+    central[8..10].copy_from_slice(&0x800u16.to_le_bytes()); central[16..20].copy_from_slice(&crc.to_le_bytes());
+    central[20..24].copy_from_slice(&declared.to_le_bytes()); central[24..28].copy_from_slice(&declared.to_le_bytes());
+    central[28..30].copy_from_slice(&(name.len() as u16).to_le_bytes());
+    let mut end = vec![0u8;22]; end[0..4].copy_from_slice(&0x06054b50u32.to_le_bytes());
+    end[8..10].copy_from_slice(&1u16.to_le_bytes()); end[10..12].copy_from_slice(&1u16.to_le_bytes());
+    end[12..16].copy_from_slice(&((central.len()+name.len()) as u32).to_le_bytes()); end[16..20].copy_from_slice(&(cd_start as u32).to_le_bytes());
+    let serialized = [&local[..],&name[..],&actual[..],&central[..],&name[..],&end[..]].concat();
+    (serialized,cd_start,actual)
+}
+#[test]
+fn zip_stored_data_ending_exactly_at_central_directory_is_valid() {
+    let (serialized,cd_start,expected) = stored_zip_fixture(0,0); let source: Input = memory(serialized,None); let token = Cancel::default();
+    let entries = crate::zip::scan(&source,&token).unwrap(); assert_eq!(entries[0].central_directory_offset,cd_start);
+    let range = crate::zip::entry_range(&source,&entries[0],&token).unwrap(); assert_eq!(range.offset+range.compressed,cd_start);
+    let mut output = Vec::new(); crate::zip::copy_range(&source,&range,&mut output,&token,&|_|{}).unwrap(); assert_eq!(output,expected);
+}
+#[test]
+fn serialized_zip_compressed_data_overlapping_central_directory_is_rejected() {
+    let (serialized,cd_start,_) = stored_zip_fixture(0,1); let source = memory(serialized,None); let input: Input = source.clone(); let token = Cancel::default();
+    let entries = crate::zip::scan(&input,&token).unwrap(); assert_eq!(entries[0].central_directory_offset,cd_start);
+    // The malformed data range still has the advertised CRC, so rejection must be
+    // structural and occur before a data read or extraction rather than at CRC time.
+    let data_start = 30+b"boot.img".len(); let mut crc = crc32fast::Hasher::new(); crc.update(&source.bytes[data_start..data_start+5]); assert_eq!(crc.finalize(),entries[0].crc);
+    source.reads.lock().unwrap().clear();
+    let error = crate::zip::entry_range(&input,&entries[0],&token).err().unwrap(); assert!(error.contains("压缩数据与中央目录重叠"),"{error}");
+    assert!(source.reads.lock().unwrap().iter().all(|(offset,length)| offset+*length as u64 <= cd_start));
+    assert!(crate::archive::parse(input,&token,&|_|{}).is_err());
+}
+#[test]
+fn serialized_zip_full_local_header_overlapping_central_directory_is_rejected() {
+    let (serialized,cd_start,_) = stored_zip_fixture(8,0); let source = memory(serialized,None); let input: Input = source.clone(); let token = Cancel::default();
+    let entries = crate::zip::scan(&input,&token).unwrap(); source.reads.lock().unwrap().clear();
+    let error = crate::zip::entry_range(&input,&entries[0],&token).err().unwrap(); assert!(error.contains("本地头与中央目录重叠"),"{error}");
+    assert!(source.reads.lock().unwrap().iter().all(|(offset,length)| offset+*length as u64 <= cd_start));
+    assert!(crate::archive::parse(input,&token,&|_|{}).is_err());
+}
 fn wait_event(receiver: &std::sync::mpsc::Receiver<Value>,predicate: impl Fn(&Value)->bool) -> Value {
     let until = std::time::Instant::now()+Duration::from_secs(5);
     loop { let event = receiver.recv_timeout(until.saturating_duration_since(std::time::Instant::now())).unwrap(); if event["event"] == "state" && predicate(&event["data"]) { return event["data"].clone(); } }

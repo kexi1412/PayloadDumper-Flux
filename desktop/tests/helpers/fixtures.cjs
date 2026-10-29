@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const zlib = require('node:zlib');
+const { zip64 } = require('./zip64.cjs');
 const sha = buffer => crypto.createHash('sha256').update(buffer).digest();
 const crcTable = Array.from({ length: 256 }, (_, value) => {
   for (let i = 0; i < 8; i++) value = (value & 1) ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
@@ -67,13 +68,20 @@ function createFixtures(directory) {
   const large = ota({ names: ['system'], blocks: 64, minorVersion: 9 });
   const largeChanged = ota({ names: ['system'], blocks: 64, minorVersion: 9, seed: 9 });
   const direct = payload({ names: ['boot'], blocks: 2, minorVersion: 9 });
+  const zip64Payload = payload({ names: ['boot'], minorVersion: 9 });
+  const zip64Local = { buffer: zip64(zip64Payload.buffer, crc32(zip64Payload.buffer)).buffer, expected: zip64Payload.expected };
+  const virtualPayload = payload({ names: ['boot'], blocks: 2, minorVersion: 10 });
+  const virtualZip64 = { ...zip64(virtualPayload.buffer, crc32(virtualPayload.buffer), 5_000_000_000), expected: virtualPayload.expected };
   const bad = ota({ names: ['boot'], badHash: true });
   const delta = ota({ names: ['boot'], delta: true });
   const rawExpected = { 'boot.img': Buffer.alloc(8192, 31), 'vendor.img': Buffer.alloc(16384, 63) };
   const raw = zip([{ name: 'images/boot.img', data: rawExpected['boot.img'] }, { name: 'images/vendor.img', data: rawExpected['vendor.img'], method: 8 }]);
   const nested = zip([{ name: 'Software/dload/update_sd_base.zip', data: raw, method: 8 }]);
-  const fixtures = { standard, selfContained, large, largeChanged, direct, bad, delta, raw: { buffer: raw, expected: rawExpected }, nested: { buffer: nested, expected: rawExpected } };
-  for (const [name, value] of Object.entries(fixtures)) { value.path = path.join(directory, `${name}-fixture.zip`); fs.writeFileSync(value.path, value.buffer); }
+  const fixtures = { standard, selfContained, large, largeChanged, direct, zip64: zip64Local, virtualZip64, bad, delta, raw: { buffer: raw, expected: rawExpected }, nested: { buffer: nested, expected: rawExpected } };
+  for (const [name, value] of Object.entries(fixtures)) {
+    if (!value.buffer) continue;
+    value.path = path.join(directory, `${name}-fixture.zip`); fs.writeFileSync(value.path, value.buffer);
+  }
   return fixtures;
 }
 module.exports = { payload, ota, zip, createFixtures, sha, crc32 };

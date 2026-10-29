@@ -9,6 +9,7 @@ use crate::util::{bounds, le16, le32, le64, Cancel, Result, CHUNK};
 pub(crate) struct Entry {
     pub name: String, pub flags: u16, pub method: u16, pub crc: u32,
     pub compressed: u64, pub size: u64, pub local_offset: u64,
+    pub central_directory_offset: u64,
 }
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct Range {
@@ -75,7 +76,7 @@ pub(crate) fn scan(input: &Input, cancel: &Cancel) -> Result<Vec<Entry>> {
         if disk != 0 { return Err("不支持多卷 ZIP".into()); }
         if size > i64::MAX as u64 || compressed > i64::MAX as u64 { return Err("ZIP64 大小溢出".into()); }
         bounds(local_offset,30,cd_offset)?;
-        out.push(Entry { name, flags, method, crc: le32(&cd,p+16), compressed, size, local_offset });
+        out.push(Entry { name, flags, method, crc: le32(&cd,p+16), compressed, size, local_offset, central_directory_offset: cd_offset });
         p = next;
     }
     if p != cd.len() {
@@ -107,10 +108,14 @@ pub(crate) fn entry_range(input: &Input, entry: &Entry, cancel: &Cancel) -> Resu
     if entry.flags & 0x2041 != 0 { return Err("不支持加密 ZIP 条目".into()); }
     if !matches!(entry.method,0|8) { return Err(format!("不支持 ZIP 压缩方法 {}",entry.method)); }
     bounds(entry.local_offset,30,input.size())?;
+    bounds(entry.local_offset,30,entry.central_directory_offset)
+        .map_err(|_| "ZIP 本地头与中央目录重叠".to_string())?;
     let h = input.read_exact(entry.local_offset,30,cancel)?;
     if le32(&h,0) != 0x04034b50 || le16(&h,6) != entry.flags || le16(&h,8) != entry.method { return Err("ZIP local/central header 不一致".into()); }
     let name_len = le16(&h,26) as usize; let extra_len = le16(&h,28) as usize;
     let offset = bounds(entry.local_offset,30+name_len as u64+extra_len as u64,input.size())?;
+    bounds(entry.local_offset,30+name_len as u64+extra_len as u64,entry.central_directory_offset)
+        .map_err(|_| "ZIP 本地头与中央目录重叠".to_string())?;
     let variable = input.read_exact(entry.local_offset+30,name_len+extra_len,cancel)?;
     if &variable[..name_len] != entry.name.as_bytes() { return Err("ZIP local/central 文件名不一致".into()); }
     if entry.flags & 8 == 0 {
@@ -124,6 +129,8 @@ pub(crate) fn entry_range(input: &Input, entry: &Entry, cancel: &Cancel) -> Resu
         if le32(&h,14) != entry.crc || compressed != entry.compressed || size != entry.size { return Err("ZIP local/central 长度或 CRC 不一致".into()); }
     }
     bounds(offset,entry.compressed,input.size())?;
+    bounds(offset,entry.compressed,entry.central_directory_offset)
+        .map_err(|_| "ZIP 条目压缩数据与中央目录重叠".to_string())?;
     if entry.method == 0 && entry.compressed != entry.size { return Err("ZIP STORED 长度不一致".into()); }
     Ok(Range { offset, compressed: entry.compressed, size: entry.size, method: entry.method, crc: Some(entry.crc) })
 }

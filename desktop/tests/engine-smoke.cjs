@@ -37,14 +37,22 @@ function nextState(predicate, timeout = 30000) {
   return promise;
 }
 async function parse(source) {
-  const done = nextState(s => s.phase === 'ready' || s.phase === 'error');
+  let started = false;
+  const done = nextState(s => {
+    if (s.phase === 'parsing') started = true;
+    return started && (s.phase === 'ready' || s.phase === 'error');
+  });
   await client.request('parse', { source, outputDir: output, options });
   const state = await done;
   assert.equal(state.phase, 'ready', state.detail);
   return state;
 }
 async function extract() {
-  const done = nextState(s => s.phase === 'ready' || s.phase === 'error');
+  let started = false;
+  const done = nextState(s => {
+    if (s.phase === 'extracting' || s.phase === 'cancelling') started = true;
+    return started && (s.phase === 'ready' || s.phase === 'error');
+  });
   await client.request('extract', { partitions: client.state.partitions.map(p => p.partitionName), outputDir: output, options });
   return done;
 }
@@ -74,6 +82,11 @@ async function main() {
     assert(finished.partitions.every(p => p.extractState === 'DONE' && p.verifyState === 'PASSED'), JSON.stringify(finished));
     verifyFiles(finished.outputDir, fixtures.selfContained.expected);
     console.log('PASS minor 9 / self-contained REPLACE / unused src_length / SHA-256');
+    await parse({ kind: 'file', value: fixtures.zip64.path });
+    finished = await extract();
+    assert(finished.partitions.every(p => p.extractState === 'DONE' && p.verifyState === 'PASSED'), JSON.stringify(finished));
+    verifyFiles(finished.outputDir, fixtures.zip64.expected);
+    console.log('PASS local ZIP64 / classic sentinels / ZIP64 EOCD and locator / SHA-256');
 
     await parse({ kind: 'file', value: fixtures.raw.path });
     finished = await extract();
@@ -100,21 +113,26 @@ async function main() {
     const agents = new Set();
     let network = fixtures.large.buffer;
     let deniedReads = 0;
+    let virtualReadBytes = 0;
     server = http.createServer((req, res) => {
       agents.add(req.headers['user-agent']);
       if (req.url === '/gone') { deniedReads++; res.writeHead(403); res.end(); return; }
+      const virtual = req.url === '/virtual-zip64' ? fixtures.virtualZip64 : null;
       const data = req.url === '/extensionless' ? fixtures.direct.buffer : network;
+      const size = virtual ? virtual.size : data.length;
       const common = { 'Accept-Ranges': 'bytes', 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="network-fixture"' };
       if (req.url === '/wrong-range') { res.writeHead(200, { ...common, 'Content-Length': 4 }); res.end(data.subarray(0, 4)); return; }
-      if (req.method === 'HEAD') { res.writeHead(200, { ...common, 'Content-Length': data.length }); res.end(); return; }
+      if (req.method === 'HEAD') { res.writeHead(200, { ...common, 'Content-Length': size }); res.end(); return; }
       const range = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range || '');
       if (!range) { res.writeHead(400); res.end(); return; }
-      const first = Number(range[1]); const last = Math.min(Number(range[2]), data.length - 1);
+      const first = Number(range[1]); const last = Math.min(Number(range[2]), size - 1);
       if (first > last || first < 0) { res.writeHead(416); res.end(); return; }
       setTimeout(() => {
         if (res.destroyed) return;
-        res.writeHead(206, { ...common, 'Content-Range': `bytes ${first}-${last}/${data.length}`, 'Content-Length': last - first + 1 });
-        res.end(data.subarray(first, last + 1));
+        const body = virtual ? virtual.read(first, last - first + 1) : data.subarray(first, last + 1);
+        if (virtual) virtualReadBytes += body.length;
+        res.writeHead(206, { ...common, 'Content-Range': `bytes ${first}-${last}/${size}`, 'Content-Length': last - first + 1 });
+        res.end(body);
       }, last - first >= 4095 ? 35 : 0);
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -142,6 +160,14 @@ async function main() {
     verifyFiles(finished.outputDir, fixtures.large.expected);
     assert(agents.has(options.userAgent));
     console.log('PASS HTTP Range / custom UA / cancellation / identity-bound resume / SHA-256');
+
+    const largeZip64 = await parse({ kind: 'url', value: origin + '/virtual-zip64' });
+    assert.equal(largeZip64.archive.fileSize, 5_000_000_000);
+    finished = await extract();
+    assert(finished.partitions.every(p => p.extractState === 'DONE' && p.verifyState === 'PASSED'), JSON.stringify(finished));
+    verifyFiles(finished.outputDir, fixtures.virtualZip64.expected);
+    assert(virtualReadBytes < 16 * 1024 * 1024, `Read ${virtualReadBytes} bytes from the virtual archive`);
+    console.log(`PASS 5GB HTTP ZIP64 / directory above 4GB / ${virtualReadBytes} bytes read / exact SHA-256`);
 
     await parse({ kind: 'url', value: origin + '/extensionless' });
     finished = await extract();
