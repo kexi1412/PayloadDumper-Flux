@@ -1,3 +1,11 @@
+# Payload Dumper · Flux — Android + PC
+
+The `main` branch now contains both **Android** and **Windows x64 desktop** applications. Previous feature, fix, smoke and PC branch histories are merged here. Both apps use the same validated Kotlin firmware extraction core; desktop adds a new-api-inspired workbench.
+
+**[PC usage and build instructions](<desktop/README.md>)** · **[Windows build workflow](<.github/workflows/build-pc.yml>)**
+
+---
+
 <div align="center">
 
 # Payload Dumper · Flux
@@ -6,7 +14,7 @@
 
 Extract partition images on Android — from a **picked local file** or an HTTP OTA direct link.
 
-![Version](https://img.shields.io/badge/Version-3.0.0-0080FF)
+![Version](https://img.shields.io/badge/Version-3.0.6-0080FF)
 ![Platform](https://img.shields.io/badge/Android-11%2B-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.1-7F52FF?logo=kotlin&logoColor=white)
 ![UI](https://img.shields.io/badge/UI-COUI17%20%2F%20Compose-0080FF)
@@ -41,11 +49,13 @@ The reader supports `META-INF/com/android/metadata.pb` and text `metadata` in ST
 
 Kernel inspection reconstructs the needed boot prefix from full-payload operations and maps every destination extent. It does not use the reference project's fixed percentage sample. Metadata is limited to 1 MiB per entry; boot inspection to 64 MiB, 16 MiB per operation and a 64 MiB read budget. XZ inspection also has a decoder memory limit. Unsupported/delta boot data, absent metadata or an exceeded budget leaves fields unavailable without blocking normal extraction. A bare `payload.bin` often cannot supply an Android version or fingerprint.
 
+**HTTP parsing no longer waits for boot/kernel inspection.** Partitions and basic firmware metadata become ready for extraction first; the kernel version is filled in asynchronously. Its HTTP source has independent cancellation and a 30-second cumulative network deadline, so cancellation never aborts extraction calls. A timeout leaves the optional field unavailable. Local parsing remains synchronous. A bounded, parse-scoped cache removes repeated directory/header requests and is released after parsing. Size probes retry transient transport failures; fast parsing and kernel reads use a 5-second idle timeout with separate 30-second cumulative deadlines rather than the extraction client's 60-second idle wait. Image extraction keeps its existing timeout policy.
+
 ## Extraction support
 
 - **Full A/B OTA:** raw `payload.bin`, or an OTA ZIP with a STORED `payload.bin`.
 - **Firmware ZIP images, Huawei UPDATE.APP and Honor/Huawei nested SD update packages:** image enumeration, per-image extraction, and a single streaming pass for images sharing an inner ZIP. Block-based OTA containers expose their data/list files; they are not automatically converted to reconstructed filesystem images.
-- **Parallel full-payload operations:** positioned reads and writes with bounded worker concurrency; `REPLACE`, `REPLACE_BZ`, `REPLACE_XZ`, `ZERO` and `DISCARD`. Known delta operations require old partition data and are not supported.
+- **Parallel full-payload operations:** positioned reads and writes with bounded worker concurrency; `REPLACE`, `REPLACE_BZ`, `REPLACE_XZ`, `ZERO` and `DISCARD`. Support is decided by each operation and its source references, not the manifest minor version alone. Self-contained partitions can be extracted at non-zero minor versions. Operations that actually require old partition data are rejected with their type and index.
 - **SHA-256 verification:** operation hashes when present, plus the optional final image hash. Invalid ranges or decoded lengths are rejected rather than marked complete.
 - **Resume:** completed operations are journaled with the exact manifest, partition and block-size identity. Unbound legacy journals, a different manifest, or a missing/truncated output image cannot skip writes. A replacement URL must serve an identical full manifest/operation layout before existing progress is reused.
 - Search/filter, per-image status, custom User-Agent, and English/Simplified Chinese localization.

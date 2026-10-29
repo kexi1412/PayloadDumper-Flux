@@ -40,9 +40,13 @@ import java.nio.ByteOrder
  */
 object ZipScanner {
 
-    private const val TAIL = 1 shl 20                // 1 MB tail is enough for EOCD + locator
-    private const val MAX_CD_SIZE = 1 shl 26         // 64 MB sanity cap on the central directory
     private const val ENDHDR = 22
+    private const val ZIP64_LOCHDR = 20
+    private const val MAX_COMMENT = 0xFFFF
+    // Maximum classic comment + EOCD + the ZIP64 locator immediately before it. The ZIP64
+    // EOCD record itself carries an absolute offset and is fetched directly when outside here.
+    private const val TAIL = MAX_COMMENT + ENDHDR + ZIP64_LOCHDR // 65,577 bytes
+    private const val MAX_CD_SIZE = 1 shl 26         // 64 MB sanity cap on the central directory
     private const val CENHDR = 46
     private const val LOCHDR = 30
 

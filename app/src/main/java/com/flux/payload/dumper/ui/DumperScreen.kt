@@ -88,6 +88,8 @@ fun DumperScreen(vm: DumperViewModel) {
     val snackbar by vm.snackbar.collectAsState()
     val relink by vm.relink.collectAsState()
     val relinkBusy by vm.relinkBusy.collectAsState()
+    val relinkReason by vm.relinkReason.collectAsState()
+    val relinkError by vm.relinkError.collectAsState()
     val batchRunning by vm.batchRunning.collectAsState()
 
     val context = LocalContext.current
@@ -228,7 +230,7 @@ fun DumperScreen(vm: DumperViewModel) {
     }
 
     relink?.let { name ->
-        RelinkDialog(partitionName = name, busy = relinkBusy, onSubmit = { vm.submitNewLink(it) }, onCancel = { vm.cancelRelink() })
+        RelinkDialog(partitionName = name, busy = relinkBusy, failureReason = relinkReason, error = relinkError, onSubmit = { vm.submitNewLink(it) }, onCancel = { vm.cancelRelink() })
     }
     if (showSettings) SettingsDialog(onDismiss = { showSettings = false })
     if (showAbout) AboutDialog(onDismiss = { showAbout = false })

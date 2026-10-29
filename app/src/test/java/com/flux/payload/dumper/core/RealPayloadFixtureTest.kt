@@ -15,7 +15,10 @@ import java.io.IOException
  */
 class RealPayloadFixtureTest {
 
-    private class FixtureSource : PayloadSource {
+    private class FixtureSource(private val allowedBootOps: Set<Int>? = null) : PayloadSource {
+        private val bootOffsets = mutableSetOf<Long>()
+        var bootBytes = 0L
+        val bootReads = mutableListOf<Long>()
         private val chunks: List<Pair<Long, ByteArray>> = buildList {
             add(0L to resource("metadata-block.bin"))
             add(2794L to resource("payload-head.bin"))
@@ -26,9 +29,12 @@ class RealPayloadFixtureTest {
             var cursor = 0
             resourceText("boot-index.txt").lineSequence()
                 .filter { it.isNotBlank() }
-                .forEach { line ->
+                .forEachIndexed { index, line ->
                     val (offset, length) = line.split(' ').map(String::toLong)
-                    add(offset to blobs.copyOfRange(cursor, cursor + length.toInt()))
+                    if (allowedBootOps == null || index in allowedBootOps) {
+                        add(offset to blobs.copyOfRange(cursor, cursor + length.toInt()))
+                        bootOffsets += offset
+                    }
                     cursor += length.toInt()
                 }
             check(cursor == blobs.size) { "boot index does not cover the blob file" }
@@ -42,6 +48,10 @@ class RealPayloadFixtureTest {
             for ((start, data) in chunks) {
                 if (offset >= start && offset + len <= start + data.size) {
                     data.copyInto(buffer, bufOffset, (offset - start).toInt(), (offset - start).toInt() + len)
+                    if (offset in bootOffsets) {
+                        bootBytes += len
+                        bootReads += offset
+                    }
                     return
                 }
             }
@@ -56,6 +66,19 @@ class RealPayloadFixtureTest {
         private fun resourceText(name: String): String =
             checkNotNull(javaClass.getResourceAsStream("/real-ota/$name")) { "missing $name" }
                 .bufferedReader().use { it.readText() }
+    }
+
+    @Test
+    fun readsActualKernelFromOnlyHeaderAndInitializedDataOperations() {
+        val source = FixtureSource(setOf(0, 16, 17))
+        val result = UniversalParser.parse(source)
+        assertEquals("6.6.66-android15-8-g29d86c5fc9dd-abogki428889875-4k", result.archiveInfo.kernelVersion)
+        assertEquals(54, result.archiveInfo.partitionCount)
+        assertEquals("15", result.archiveInfo.androidVersion)
+        assertEquals("2025-09-01", result.archiveInfo.securityPatchLevel)
+        assertEquals(1_052_544L, source.bootBytes)
+        assertEquals(listOf(1_275_947_753L, 1_286_397_533L, 1_286_586_413L), source.bootReads)
+        println("PJZ110_UTS bootBytes=${source.bootBytes} bootOperations=${source.bootReads.size} kernel=${result.archiveInfo.kernelVersion}")
     }
 
     @Test

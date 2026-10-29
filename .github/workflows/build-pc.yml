@@ -1,0 +1,83 @@
+name: Build PC
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/**'
+      - 'app/src/main/java/com/flux/payload/dumper/core/**'
+      - 'app/src/main/java/com/flux/payload/dumper/model/Models.kt'
+      - 'app/src/main/proto/**'
+      - 'app/src/test/**'
+      - 'gradle/wrapper/**'
+      - 'gradlew*'
+      - '.github/workflows/build-pc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.2'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install frontend and packaging dependencies
+        run: pnpm --dir desktop install --frozen-lockfile
+      - name: Install verified Electron runtime
+        run: pnpm --dir desktop runtime:install
+      - name: Test desktop IPC
+        run: pnpm --dir desktop test
+      - name: Test and build shared firmware engine
+        run: pnpm --dir desktop engine:build
+      - name: Create standalone Java runtime
+        run: pnpm --dir desktop runtime:build
+      - name: Verify actual extraction and HTTP resume
+        run: pnpm --dir desktop test:engine
+      - name: Typecheck and build renderer
+        run: pnpm --dir desktop build
+      - name: Verify real Electron UI and responsive layouts
+        run: pnpm --dir desktop test:ui
+      - name: Package Windows portable app
+        run: pnpm --dir desktop package:win
+      - name: Upload Windows portable artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PayloadDumper-Flux-PC-Windows-${{ github.run_number }}
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.zip
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload desktop UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PayloadDumper-Flux-PC-UI
+          path: desktop/.cache/ui-screenshots-*/
+          if-no-files-found: warn
+      - name: Upload engine test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PayloadDumper-Flux-PC-test-reports
+          path: |
+            desktop/engine/build/test-results/
+            desktop/engine/build/reports/tests/
+          if-no-files-found: warn

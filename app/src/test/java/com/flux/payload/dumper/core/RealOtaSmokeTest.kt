@@ -22,10 +22,7 @@ class RealOtaSmokeTest {
     @Test
     fun parsesRealOtaEndToEnd() {
         val url = System.getenv(ENV_URL)?.trim().orEmpty()
-        if (url.isEmpty()) {
-            println("REAL_OTA skipped: $ENV_URL is not set")
-            return
-        }
+        org.junit.Assume.assumeTrue("$ENV_URL is not set", url.isNotEmpty())
         val lines = mutableListOf<String>()
         val client = OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
@@ -37,7 +34,7 @@ class RealOtaSmokeTest {
         HttpSource.open(url, client).use { source ->
             lines += "source.name=${source.fileName()}"
             lines += "source.size=${source.size}"
-            val result = UniversalParser.parse(source) { message -> lines += "progress=$message" }
+            val result = UniversalParser.parse(source, onProgress = { message -> lines += "progress=$message" })
             val info = result.archiveInfo
             lines += "archive.fileName=${info.fileName}"
             lines += "archive.fileSize=${info.fileSize}"

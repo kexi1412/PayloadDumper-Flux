@@ -10,7 +10,9 @@ import chromeos_update_engine.UpdateMetadata.PartitionUpdate
 import com.flux.payload.dumper.DumperApplication
 import com.flux.payload.dumper.R
 import com.flux.payload.dumper.core.Diagnostics
+import com.flux.payload.dumper.core.FirmwareMetadataReader
 import com.flux.payload.dumper.core.HttpSource
+import com.flux.payload.dumper.core.HttpReadFailure
 import com.flux.payload.dumper.core.NestedZipStream
 import com.flux.payload.dumper.core.Net
 import com.flux.payload.dumper.core.ParseResult
@@ -45,6 +47,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -84,6 +87,10 @@ class DumperViewModel : ViewModel() {
     val relink: StateFlow<String?> = _relink.asStateFlow()
     private val _relinkBusy = MutableStateFlow(false)
     val relinkBusy: StateFlow<Boolean> = _relinkBusy.asStateFlow()
+    private val _relinkReason = MutableStateFlow<String?>(null)
+    val relinkReason: StateFlow<String?> = _relinkReason.asStateFlow()
+    private val _relinkError = MutableStateFlow<String?>(null)
+    val relinkError: StateFlow<String?> = _relinkError.asStateFlow()
     private var relinkJob: Job? = null
     private var relinkEpoch = 0L
     private var archiveGeneration = 0L
@@ -96,6 +103,10 @@ class DumperViewModel : ViewModel() {
     val batchRunning: StateFlow<Boolean> = _batchRunning.asStateFlow()
     private var parseJob: Job? = null
     private var batchJob: Job? = null
+    // Optional network enrichment must not lock parsing or extraction. This child source owns
+    // only its own HTTP calls, so cancelling it cannot interrupt the extraction source.
+    private var metadataJob: Job? = null
+    private var metadataSource: HttpSource? = null
 
     val inputLocked: StateFlow<Boolean> by lazy {
         combine(_parseState, _partitions, _resolvingDocument, _batchRunning, relinkLock) { state, rows, resolving, batch, relink ->
@@ -148,6 +159,7 @@ class DumperViewModel : ViewModel() {
 
     private fun resetArchive() {
         archiveGeneration++
+        cancelKernelMetadata()
         closeSource()
         payload = null
         parseResult = null
@@ -270,6 +282,7 @@ class DumperViewModel : ViewModel() {
             return
         }
         val generation = ++archiveGeneration
+        cancelKernelMetadata()
         _parseState.value = ParseState.Parsing(str(R.string.state_opening))
         // Drop the previous archive's rows up front. This used to happen in onSuccess, but rows
         // are now published incrementally as each nested archive is scanned, so clearing there
@@ -296,6 +309,7 @@ class DumperViewModel : ViewModel() {
                     _parseState.value = ParseState.Parsing(str(R.string.state_reading_archive, src.fileName()))
                     val result = UniversalParser.parse(
                         source = src,
+                        includeKernel = src !is HttpSource,
                         onProgress = { msg -> _parseState.value = ParseState.Parsing(msg) },
                         // Publish rows the moment an archive has been scanned. The Honor package
                         // is three nested archives and scanning them is inherently sequential
@@ -348,6 +362,7 @@ class DumperViewModel : ViewModel() {
                         _parseState.value = ParseState.Ready(result.archiveInfo)
                     }
                 }
+                (source as? HttpSource)?.let { startKernelMetadata(it, result, generation) }
             }.onFailure { e ->
                 if (e is CancellationException) {
                     runCatching { opened?.close() }
@@ -381,6 +396,78 @@ class DumperViewModel : ViewModel() {
                 }
             }
         }
+    }
+
+    /** Optional HTTP-only enrichment; local FileChannels must not share interruptible readers. */
+    private fun startKernelMetadata(
+        capturedSource: HttpSource,
+        parsed: ParseResult,
+        generation: Long,
+    ) {
+        cancelKernelMetadata()
+        if (generation != archiveGeneration || source !== capturedSource || _parseState.value !is ParseState.Ready) return
+        val knownKernel = parsed.archiveInfo.kernelVersion
+        if (knownKernel.isNotBlank() && knownKernel != "—") return
+        val child = try {
+            capturedSource.forMetadata()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return // Enrichment cannot make an already parsed archive unusable.
+        }
+        metadataSource = child
+        metadataJob = viewModelScope.launch {
+            val thisJob = currentCoroutineContext()[Job]
+            try {
+                val enriched = runInterruptible(Dispatchers.IO) {
+                    FirmwareMetadataReader.readKernel(
+                        child,
+                        parsed.archiveInfo,
+                        (parsed as? ParseResult.CrAU)?.payload,
+                    )
+                }
+                currentCoroutineContext().ensureActive()
+                // Relinking does not change archiveGeneration. The parent and child identities
+                // also fence late completions after a mirror switch or metadata cancellation.
+                if (generation != archiveGeneration || source !== capturedSource || metadataSource !== child) return@launch
+                val ready = _parseState.value as? ParseState.Ready ?: return@launch
+                fun fillMissing(current: String, candidate: String): String =
+                    if (current.isBlank() || current == "—") candidate.ifBlank { current } else current
+                val current = ready.archive
+                val merged = current.copy(
+                    androidVersion = fillMissing(current.androidVersion, enriched.androidVersion),
+                    securityPatchLevel = fillMissing(current.securityPatchLevel, enriched.securityPatchLevel),
+                    kernelVersion = fillMissing(current.kernelVersion, enriched.kernelVersion),
+                    fingerprint = fillMissing(current.fingerprint, enriched.fingerprint),
+                )
+                parseResult = when (val latest = parseResult) {
+                    is ParseResult.CrAU -> latest.copy(archiveInfo = merged)
+                    is ParseResult.RawEntries -> latest.copy(archiveInfo = merged)
+                    null -> null
+                }
+                // Do not republish rows: extraction may already be running with live progress.
+                _parseState.value = ready.copy(archive = merged)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Kernel metadata is best-effort. Keep Ready, rows and extraction untouched.
+            } finally {
+                runCatching { child.close() }
+                if (metadataSource === child) metadataSource = null
+                if (metadataJob === thisJob) metadataJob = null
+            }
+        }
+    }
+
+    /** Called on Main before a reset/parse/relink closes or replaces the primary source. */
+    private fun cancelKernelMetadata() {
+        val job = metadataJob
+        val child = metadataSource
+        // Invalidate the completion token before either cancellation path can resume the job.
+        metadataJob = null
+        metadataSource = null
+        job?.cancel()
+        runCatching { child?.close() }
     }
 
     fun extract(partitionName: String) {
@@ -494,15 +581,19 @@ class DumperViewModel : ViewModel() {
                 resumeStates.remove(partitionName)
                 if (result.verified == false) _snackbar.value = str(R.string.msg_extract_verify_failed, partitionName)
             }.onFailure { e ->
-                if (e is CancellationException) {
+                if (e is CancellationException || !currentCoroutineContext().isActive) {
                     update(partitionName) { it.copy(extractState = ExtractState.PAUSED, message = str(R.string.msg_cancelled_progress_kept)) }
+                    currentCoroutineContext().ensureActive()
                     throw e
                 }
-                // A network read that died on a remote source is almost always an expired/broken OTA
-                // link. Keep the partial output + resume state and ask the user for a fresh link.
-                if (source is HttpSource && e is IOException) {
+                // A URL replacement can repair only failures proven to originate in HTTP reads.
+                // Disk, hash and unsupported-payload errors must retain their real cause.
+                if (src is HttpSource && HttpReadFailure.isRemoteReadFailure(e)) {
+                    val reason = e.message ?: e.javaClass.simpleName
+                    _relinkReason.value = reason
+                    _relinkError.value = null
                     update(partitionName) {
-                        it.copy(extractState = ExtractState.PAUSED, message = str(R.string.msg_link_stalled))
+                        it.copy(extractState = ExtractState.PAUSED, message = str(R.string.msg_link_stalled, reason))
                     }
                     _relink.value = partitionName
                 } else {
@@ -521,12 +612,14 @@ class DumperViewModel : ViewModel() {
         val original = payload ?: return
         val url = newUrl.trim()
         if (!SourceSelection.isHttpUrl(url)) {
-            _snackbar.value = str(R.string.msg_invalid_http)
+            _relinkError.value = str(R.string.msg_invalid_http)
             return
         }
         val generation = archiveGeneration
         val epoch = ++relinkEpoch
+        cancelKernelMetadata()
         val expected = original.manifest.toByteArray()
+        _relinkError.value = null
         _relinkBusy.value = true
         relinkJob = viewModelScope.launch {
             val thisJob = currentCoroutineContext()[Job]
@@ -539,7 +632,7 @@ class DumperViewModel : ViewModel() {
                 val freshPayload = runInterruptible(Dispatchers.IO) {
                     val freshSource = HttpSource.open(url, client)
                     candidate = freshSource
-                    val fresh = PayloadParser.parse(freshSource)
+                    val fresh = freshSource.forParsing().use { PayloadParser.parse(it) }
                     if (fresh.manifest.partitionsList.none { it.partitionName == name }) {
                         throw IOException(str(R.string.err_partition_missing, name))
                     }
@@ -558,15 +651,29 @@ class DumperViewModel : ViewModel() {
                 _selection.update { it.copy(networkUrl = url) }
                 Preferences.setString(Preferences.KEY_NETWORK_URL, url)
                 val ready = _parseState.value as? ParseState.Ready
-                if (ready != null) _parseState.value = ready.copy(archive = ready.archive.copy(fileName = freshSource.fileName(), fileSize = freshSource.size))
+                if (ready != null) {
+                    val refreshed = ParseResult.CrAU(
+                        freshPayload,
+                        ready.archive.copy(fileName = freshSource.fileName(), fileSize = freshSource.size),
+                    )
+                    parseResult = refreshed
+                    _parseState.value = ready.copy(archive = refreshed.archiveInfo)
+                    startKernelMetadata(freshSource, refreshed, generation)
+                }
                 _relink.value = null
+                _relinkReason.value = null
+                _relinkError.value = null
                 _relinkBusy.value = false
                 _snackbar.value = str(R.string.msg_resume_same_rom, name)
                 extractInternal(name)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (generation == archiveGeneration && epoch == relinkEpoch) _snackbar.value = e.message ?: str(R.string.msg_relink_failed)
+                currentCoroutineContext().ensureActive()
+                if (generation == archiveGeneration && epoch == relinkEpoch) {
+                    // The validation failure must remain visible above the modal, not behind it.
+                    _relinkError.value = e.message ?: str(R.string.msg_relink_failed)
+                }
             } finally {
                 if (!committed) runCatching { candidate?.close() }
                 if (relinkJob == thisJob) {
@@ -580,8 +687,11 @@ class DumperViewModel : ViewModel() {
     fun cancelRelink() {
         val name = _relink.value ?: return
         relinkEpoch++
+        cancelKernelMetadata()
         relinkJob?.cancel()
         _relink.value = null
+        _relinkReason.value = null
+        _relinkError.value = null
         update(name) { it.copy(extractState = ExtractState.ERROR, message = str(R.string.msg_cancelled_progress_kept)) }
     }
 
@@ -773,6 +883,7 @@ class DumperViewModel : ViewModel() {
     override fun onCleared() {
         archiveGeneration++
         relinkEpoch++
+        cancelKernelMetadata()
         parseJob?.cancel()
         batchJob?.cancel()
         relinkJob?.cancel()

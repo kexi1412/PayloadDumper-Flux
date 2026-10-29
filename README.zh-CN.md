@@ -1,3 +1,11 @@
+# Payload Dumper · Flux — PC 分支
+
+当前 `pc` 分支新增 **Windows x64 桌面版**：参考 new-api 的控制台布局，支持本地 / HTTP 固件、分区表格、真实提取进度和亮暗主题，复用原 Kotlin 提取引擎。Android 版原有内容和分支保留。
+
+**[PC 使用与构建说明](<desktop/README.md>)** · **[Windows 自动构建](<.github/workflows/build-pc.yml>)**
+
+---
+
 <div align="center">
 
 # Payload Dumper · Flux
@@ -39,6 +47,8 @@
 支持 ZIP 内 `META-INF/com/android/metadata.pb` 和文本 metadata 的 STORED/DEFLATE 条目，校验边界、长度及 CRC。只读取明确路径的 build.prop 小条目，不下载或挂载完整 system/vendor 镜像寻找属性。
 
 boot 信息读取按全部 `dst_extents` 正确映射全量操作，不照搬上游固定百分比采样。元数据每条目限 1MiB；boot 检查限 64MiB、单操作 16MiB、读取预算 64MiB，XZ 另有内存限制。缺少元数据、差分 boot、超预算或不支持的编码保留未知，不阻断正常提取。裸 payload 通常不能提供 Android 版本或指纹；boot header 只有年月时不编造补丁日期。
+
+**网络解析不再等待 boot 内核检查**：先显示分区列表与基础固件信息，立即允许提取；内核版本随后在后台补全。后台 HTTP 使用独立取消作用域和 30 秒累计网络期限，不影响正在提取的请求；超时保留未知。本地文件仍使用原同步路径。解析期缓存有界、读取结束即释放，重复 ZIP 目录与 payload 固定头不再产生额外往返。大小探测会有限重试；快解析与内核读取使用 5 秒网络空闲超时和各自 30 秒累计期限，不再对几字节元数据套用提取用的 60 秒等待；镜像提取保留原有超时策略。
 
 ## 支持与使用
 

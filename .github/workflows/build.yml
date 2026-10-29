@@ -82,11 +82,11 @@ jobs:
         shell: bash
 
       - name: Zipalign, sign and verify
-        env:
-          FLUX_SIGN_PASS: ${{ secrets.FLUX_SIGNING_PASSWORD }}
         run: |
           set -e
           BT="$ANDROID_HOME/build-tools/35.0.0"
+          # Use the password selected by the keystore step for both persistent and fallback keys.
+          export FLUX_SIGN_PASS="$(<signing-password.txt)"
           test -n "$FLUX_SIGN_PASS"
           "$BT/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
           "$BT/apksigner" sign --ks release.p12 --ks-key-alias flux \

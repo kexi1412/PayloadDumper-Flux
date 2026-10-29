@@ -1,0 +1,137 @@
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const { EngineClient } = require('../electron/engine-client.cjs');
+const { createFixtures, sha } = require('./helpers/fixtures.cjs');
+const root = path.resolve(__dirname, '..');
+const tempParent = path.join(root, '.cache', 'tests');
+fs.mkdirSync(tempParent, { recursive: true });
+const temp = fs.mkdtempSync(path.join(tempParent, 'flux-pc-smoke-'));
+const fixtures = createFixtures(path.join(temp, 'fixtures'));
+const output = path.join(temp, 'outputs');
+const javaName = process.platform === 'win32' ? 'java.exe' : 'java';
+const bundled = path.join(root, 'runtime/bin', javaName);
+const java = process.env.FLUX_JAVA || (fs.existsSync(bundled) ? bundled : process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin', javaName) : javaName);
+const jar = path.join(root, 'engine/build/libs/flux-engine.jar');
+const client = new EngineClient({ command: java, args: [`-Dflux.cacheDir=${path.join(temp, 'cache')}`, '-jar', jar], cwd: root });
+const options = { workers: 4, verify: true, userAgent: 'Flux-PC-Smoke/1' };
+const logs = [];
+client.on('log', entry => logs.push(entry));
+function nextState(predicate, timeout = 30000) {
+  let handler;
+  let timer;
+  const promise = new Promise((resolve, reject) => {
+    handler = state => { if (predicate(state)) { clearTimeout(timer); client.off('state', handler); resolve(state); } };
+    timer = setTimeout(() => { client.off('state', handler); reject(new Error(`State wait timed out: ${JSON.stringify(client.state)}\n${JSON.stringify(logs.slice(-6))}`)); }, timeout);
+    client.on('state', handler);
+  });
+  return promise;
+}
+async function parse(source) {
+  const done = nextState(s => s.phase === 'ready' || s.phase === 'error');
+  await client.request('parse', { source, outputDir: output, options });
+  const state = await done;
+  assert.equal(state.phase, 'ready', state.detail);
+  return state;
+}
+async function extract() {
+  const done = nextState(s => s.phase === 'ready' || s.phase === 'error');
+  await client.request('extract', { partitions: client.state.partitions.map(p => p.partitionName), outputDir: output, options });
+  return done;
+}
+function verifyFiles(directory, expected) {
+  for (const [name, value] of Object.entries(expected)) {
+    const actual = fs.readFileSync(path.join(directory, name));
+    assert.equal(actual.length, value.length, name);
+    assert.equal(sha(actual).toString('hex'), sha(value).toString('hex'), name);
+  }
+}
+async function main() {
+  let server;
+  try {
+    assert(fs.existsSync(jar), 'Build the JVM engine before running integration tests.');
+    await client.start();
+    let parsed = await parse({ kind: 'file', value: fixtures.standard.path });
+    assert.equal(parsed.partitions.length, 4);
+    assert.equal(parsed.archive.androidVersion, '16');
+    assert.equal(parsed.archive.securityPatchLevel, '2026-10-01');
+    let finished = await extract();
+    assert(finished.partitions.every(p => p.extractState === 'DONE' && p.verifyState === 'PASSED'), JSON.stringify(finished));
+    verifyFiles(finished.outputDir, fixtures.standard.expected);
+    console.log('PASS local OTA / metadata / four partitions / SHA-256');
+
+    await parse({ kind: 'file', value: fixtures.selfContained.path });
+    finished = await extract();
+    assert(finished.partitions.every(p => p.extractState === 'DONE' && p.verifyState === 'PASSED'), JSON.stringify(finished));
+    verifyFiles(finished.outputDir, fixtures.selfContained.expected);
+    console.log('PASS non-zero minor / self-contained full partition / exact SHA-256');
+
+    await parse({ kind: 'file', value: fixtures.raw.path });
+    finished = await extract();
+    assert(finished.partitions.every(p => p.extractState === 'DONE'), JSON.stringify(finished));
+    verifyFiles(finished.outputDir, fixtures.raw.expected);
+    console.log('PASS plain ZIP / STORED / DEFLATE / exact output');
+
+    await parse({ kind: 'file', value: fixtures.nested.path });
+    finished = await extract();
+    assert(finished.partitions.every(p => p.extractState === 'DONE'), JSON.stringify(finished));
+    verifyFiles(path.join(finished.outputDir, 'update_sd_base'), fixtures.nested.expected);
+    console.log('PASS nested ZIP / batched stream / exact output');
+
+    await parse({ kind: 'file', value: fixtures.bad.path });
+    finished = await extract();
+    assert(finished.partitions.every(p => p.extractState === 'ERROR'));
+    console.log('PASS corrupt operation SHA-256 rejected');
+    await parse({ kind: 'file', value: fixtures.delta.path });
+    finished = await extract();
+    assert(finished.partitions.every(p => p.extractState === 'ERROR'));
+    assert(!fs.existsSync(path.join(finished.outputDir, 'boot.img')));
+    console.log('PASS genuine SOURCE_COPY / minor zero / rejected before image creation');
+
+    const agents = new Set();
+    server = http.createServer((req, res) => {
+      agents.add(req.headers['user-agent']);
+      const data = fixtures.large.buffer;
+      const common = { 'Accept-Ranges': 'bytes', 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="network-fixture.zip"' };
+      if (req.method === 'HEAD') { res.writeHead(200, { ...common, 'Content-Length': data.length }); res.end(); return; }
+      const range = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range || '');
+      if (!range) { res.writeHead(400); res.end(); return; }
+      const first = Number(range[1]); const last = Math.min(Number(range[2]), data.length - 1);
+      if (first > last || first < 0) { res.writeHead(416); res.end(); return; }
+      setTimeout(() => {
+        if (res.destroyed) return;
+        res.writeHead(206, { ...common, 'Content-Range': `bytes ${first}-${last}/${data.length}`, 'Content-Length': last - first + 1 });
+        res.end(data.subarray(first, last + 1));
+      }, last - first >= 4095 ? 35 : 0);
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${server.address().port}/firmware.zip`;
+    await parse({ kind: 'url', value: url });
+    const progress = nextState(s => s.phase === 'extracting' && s.partitions.some(p => p.extractState === 'RUNNING' && p.progress > 0 && p.progress < 1));
+    await client.request('extract', { partitions: ['system'], outputDir: output, options });
+    await progress;
+    const paused = nextState(s => s.phase === 'ready');
+    await client.request('cancel');
+    const pauseState = await paused;
+    assert(pauseState.partitions.some(p => p.extractState === 'PAUSED'), JSON.stringify(pauseState));
+    finished = await extract();
+    assert(finished.partitions.every(p => p.extractState === 'DONE' && p.verifyState === 'PASSED'), JSON.stringify(finished));
+    verifyFiles(finished.outputDir, fixtures.large.expected);
+    assert(agents.has(options.userAgent));
+    console.log('PASS HTTP Range / custom UA / cancellation / identity-bound resume / SHA-256');
+    await client.request('reset');
+    assert.equal(client.state.phase, 'idle');
+    console.log('PASS reset / shutdown');
+  } finally {
+    await client.stop();
+    if (server) await new Promise(resolve => server.close(resolve));
+    const resolved = fs.realpathSync(temp);
+    assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync(tempParent).toLowerCase());
+    assert(path.basename(resolved).startsWith('flux-pc-smoke-'));
+    fs.rmSync(resolved, { recursive: true });
+  }
+}
+main().catch(error => { console.error(error.stack); process.exitCode = 1; });

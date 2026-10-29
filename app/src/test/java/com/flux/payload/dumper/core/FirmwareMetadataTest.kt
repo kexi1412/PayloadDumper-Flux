@@ -100,6 +100,21 @@ class FirmwareMetadataTest {
         }
     }
 
+    @Test fun invalidBannerBeforeValidBannerIsIgnored() {
+        val invalid = "Linux version definitely-not-a-release (noise)\u0000".toByteArray()
+        assertEquals("6.1.118-test", FirmwareMetadata.kernelBanner(invalid + banner))
+    }
+
+    @Test fun repeatedCopiesOfTheSameKernelReleaseAreAccepted() {
+        assertEquals("6.1.118-test", FirmwareMetadata.kernelBanner(banner + ByteArray(64) + banner))
+    }
+
+    @Test fun conflictingValidKernelReleasesStayUnknown() {
+        val other = "Linux version 6.6.66-other (builder@test) #2 SMP\u0000".toByteArray()
+        assertEquals("", FirmwareMetadata.kernelBanner(banner + ByteArray(64) + other))
+        assertEquals("", FirmwareMetadata.kernelBanner(other + ByteArray(64) + banner))
+    }
+
     @Test fun ramdiskBannerDoesNotBecomeKernelVersion() {
         val image = bootImage(4, ByteArray(256)) + banner
         assertEquals("", FirmwareMetadata.fromBootImage(image).kernelVersion)
@@ -172,6 +187,25 @@ class FirmwareMetadataTest {
             .addDstExtents(extent(1)).addDstExtents(extent(0)).build()
         val result = FirmwareMetadataReader.read(source, base(source), bootPayload(source, operation))
         assertEquals("6.1.118-test", result.kernelVersion)
+        assertEquals("header operation must not be fetched twice", 4 + operationBytes.size, source.bytesRead)
+    }
+
+    @Test fun kernelCanBeReadAfterPublishingBasicMetadataWithoutReplacingTargetFields() {
+        val image = bootImage(4, banner, packed(15, 0, 0, 2025, 2)).copyOf(8192)
+        val source = MemorySource(image)
+        val operation = UpdateMetadata.InstallOperation.newBuilder()
+            .setType(UpdateMetadata.InstallOperation.Type.REPLACE).setDataOffset(0).setDataLength(8192)
+            .addDstExtents(UpdateMetadata.Extent.newBuilder().setStartBlock(0).setNumBlocks(2)).build()
+        val payload = bootPayload(source, operation)
+        val light = FirmwareMetadataReader.read(source, base(source), payload, includeKernel = false)
+        assertEquals("", light.kernelVersion)
+        assertEquals("fast stage must not reconstruct boot", 4, source.bytesRead)
+        val ready = light.copy(androidVersion = "16", securityPatchLevel = "2025-12-05", fingerprint = fingerprint)
+        val enriched = FirmwareMetadataReader.readKernel(source, ready, payload)
+        assertEquals("6.1.118-test", enriched.kernelVersion)
+        assertEquals("16", enriched.androidVersion)
+        assertEquals("2025-12-05", enriched.securityPatchLevel)
+        assertEquals(fingerprint, enriched.fingerprint)
     }
 
     @Test fun deltaOrIncompleteBootDoesNotBecomeZeroFilledKernel() {

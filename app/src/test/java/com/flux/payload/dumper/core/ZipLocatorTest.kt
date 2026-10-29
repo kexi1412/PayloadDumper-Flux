@@ -68,9 +68,10 @@ class ZipLocatorTest {
             putInt(1)
         }.array()
 
-        // A 1 KiB comment plus ZIP64 escape values in the classic EOCD: this is the exact
-        // shape produced by ota_from_target_files, and what the real 8.2 GB package uses.
-        val comment = ByteArray(1024) { 0x41 }
+        // Maximum legal 65,535-byte comment plus ZIP64 escape values in the classic EOCD.
+        // This proves the bounded 65,577-byte tail still begins exactly at the 20-byte locator;
+        // the ZIP64 EOCD record before it must be fetched through its absolute offset.
+        val comment = ByteArray(0xFFFF) { 0x41 }
         val eocd = le(22 + comment.size).apply {
             putInt(0x06054b50)
             s(0); s(0)

@@ -260,6 +260,8 @@ fun RelinkDialog(
     onSubmit: (String) -> Unit,
     onCancel: () -> Unit,
     busy: Boolean = false,
+    failureReason: String? = null,
+    error: String? = null,
 ) {
     var url by remember { mutableStateOf("") }
     FluxDialog(
@@ -270,7 +272,7 @@ fun RelinkDialog(
             usePlatformDefaultWidth = false,
         ),
         actions = {
-            AccentButton(text = stringResource(R.string.relink_confirm), onClick = { onSubmit(url) }, enabled = !busy && url.isNotBlank())
+            AccentButton(text = stringResource(if (busy) R.string.relink_checking else R.string.relink_confirm), onClick = { onSubmit(url) }, enabled = !busy && url.isNotBlank())
             Spacer(Modifier.height(4.dp))
             TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                 Text(stringResource(R.string.action_cancel), style = MaterialTheme.typography.labelLarge)
@@ -285,9 +287,19 @@ fun RelinkDialog(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(16.dp))
+        if (!failureReason.isNullOrBlank()) {
+            Text(stringResource(R.string.relink_reason, failureReason), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(12.dp))
+        }
+        if (!error.isNullOrBlank()) {
+            Text(error, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+            Spacer(Modifier.height(12.dp))
+        }
         OutlinedTextField(
             value = url,
             onValueChange = { url = it },
+            enabled = !busy,
+            isError = !error.isNullOrBlank(),
             label = { Text(stringResource(R.string.relink_input_label)) },
             singleLine = true,
             shape = RoundedCornerShape(FluxRadius.Field),

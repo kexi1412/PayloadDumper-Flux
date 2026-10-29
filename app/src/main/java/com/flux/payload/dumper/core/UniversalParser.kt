@@ -87,6 +87,8 @@ object UniversalParser {
     /**
      * Parse [source].
      *
+     * @param includeKernel false for a remote interactive parse: publish the result first,
+     *   then call [FirmwareMetadataReader.readKernel] on a separately owned HTTP metadata source.
      * @param onProgress human-readable progress for long streaming operations
      * @param onPartial receives an intermediate, complete-so-far entry list whenever a nested
      *   archive finishes being scanned. Scanning a Honor package means inflating 11.5 GB across
@@ -96,33 +98,61 @@ object UniversalParser {
      */
     fun parse(
         source: PayloadSource,
+        includeKernel: Boolean = true,
         onProgress: ((String) -> Unit)? = null,
         onPartial: ((List<ParseResult.RawEntry>) -> Unit)? = null,
     ): ParseResult {
-        val parsed = when (val format = FormatDetector.detect(source)) {
+        val remote = if (!includeKernel && source is HttpSource) source.forParsing() else null
+        return try {
+            ParseReadCache(remote ?: source).use { input ->
+                val format = FormatDetector.detect(input)
+                if (remote != null && format !is ArchiveFormat.CrAUPayload) {
+                    // Honor's nested DEFLATE ZIP may legitimately stream gigabytes just to
+                    // discover entries. Do not apply a small-CrAU-metadata deadline to that work.
+                    remote.close()
+                    ParseReadCache(source).use { streaming ->
+                        parseDetected(streaming, format, includeKernel, onProgress, onPartial)
+                    }
+                } else {
+                    parseDetected(input, format, includeKernel, onProgress, onPartial)
+                }
+            }
+        } finally {
+            remote?.close()
+        }
+    }
+
+    private fun parseDetected(
+        input: PayloadSource,
+        format: ArchiveFormat,
+        includeKernel: Boolean,
+        onProgress: ((String) -> Unit)?,
+        onPartial: ((List<ParseResult.RawEntry>) -> Unit)?,
+    ): ParseResult {
+        val parsed = when (format) {
             is ArchiveFormat.CrAUPayload -> {
-                val payload = PayloadParser.parse(source)
+                val payload = PayloadParser.parse(input, input.readFully(0, 4))
                 ParseResult.CrAU(payload, ArchiveInfo(
-                    fileName = source.fileName(),
-                    fileSize = source.size,
+                    fileName = input.fileName(),
+                    fileSize = input.size,
                     securityPatchLevel = "",
                     partitionCount = payload.manifest.partitionsCount,
                     blockSize = payload.blockSize,
                 ))
             }
 
-            is ArchiveFormat.UpdateApp -> parseRawUpdateApp(source)
+            is ArchiveFormat.UpdateApp -> parseRawUpdateApp(input)
 
-            is ArchiveFormat.HonorSdUpdate -> parseHonor(source, format.entries, onProgress, onPartial)
+            is ArchiveFormat.HonorSdUpdate -> parseHonor(input, format.entries, onProgress, onPartial)
 
-            is ArchiveFormat.BlockOta -> parseBlockOta(source)
+            is ArchiveFormat.BlockOta -> parseBlockOta(input)
 
             is ArchiveFormat.Unknown -> throw java.io.IOException(
                 "Unrecognised archive — expected payload.bin (CrAU), an OTA ZIP, UPDATE.APP, or a Honor/Huawei SD update package"
             )
         }
         onProgress?.invoke("Reading firmware metadata…")
-        val metadata = FirmwareMetadataReader.read(source, parsed.archiveInfo, (parsed as? ParseResult.CrAU)?.payload)
+        val metadata = FirmwareMetadataReader.read(input, parsed.archiveInfo, (parsed as? ParseResult.CrAU)?.payload, includeKernel)
         return when (parsed) {
             is ParseResult.CrAU -> parsed.copy(archiveInfo = metadata)
             is ParseResult.RawEntries -> parsed.copy(archiveInfo = metadata)
