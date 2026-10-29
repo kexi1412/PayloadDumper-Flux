@@ -220,6 +220,49 @@ class FirmwareMetadataTest {
         }
     }
 
+    @Test fun nonzeroMinorSelfContainedBootStillProvidesVerifiedMetadata() {
+        val image = bootImage(4, banner).copyOf(8192)
+        val compressed = listOf(
+            UpdateMetadata.InstallOperation.Type.REPLACE to image,
+            UpdateMetadata.InstallOperation.Type.REPLACE_XZ to ByteArrayOutputStream().also { output ->
+                org.tukaani.xz.XZOutputStream(output, org.tukaani.xz.LZMA2Options()).use { it.write(image) }
+            }.toByteArray(),
+            UpdateMetadata.InstallOperation.Type.REPLACE_BZ to ByteArrayOutputStream().also { output ->
+                org.apache.commons.compress.compressors.bzip2.BZip2CompressorOutputStream(output).use { it.write(image) }
+            }.toByteArray(),
+        )
+        for ((type, bytes) in compressed) {
+            for (minor in listOf(1, 9)) {
+                val source = MemorySource(bytes)
+                val operation = UpdateMetadata.InstallOperation.newBuilder().setType(type)
+                    .setDataOffset(0).setDataLength(bytes.size.toLong()).setSrcLength(8192)
+                    .setDataSha256Hash(com.google.protobuf.ByteString.copyFrom(
+                        java.security.MessageDigest.getInstance("SHA-256").digest(bytes)))
+                    .addDstExtents(UpdateMetadata.Extent.newBuilder().setStartBlock(0).setNumBlocks(2)).build()
+                val result = FirmwareMetadataReader.read(source, base(source), bootPayload(source, operation, minor))
+                assertEquals("minor=$minor type=$type", "6.1.118-test", result.kernelVersion)
+                assertEquals("Header operation should be cached", 4 + bytes.size, source.bytesRead)
+            }
+        }
+    }
+
+    @Test fun sourceReferencesOnReplaceDoNotBecomeSelfContainedBootMetadata() {
+        val image = bootImage(4, banner).copyOf(8192)
+        val replace = UpdateMetadata.InstallOperation.newBuilder()
+            .setType(UpdateMetadata.InstallOperation.Type.REPLACE).setDataOffset(0).setDataLength(8192)
+            .addDstExtents(UpdateMetadata.Extent.newBuilder().setStartBlock(0).setNumBlocks(2)).build()
+        val operations = listOf(
+            replace.toBuilder().addSrcExtents(extent(0)).build(),
+            replace.toBuilder().setSrcSha256Hash(com.google.protobuf.ByteString.copyFrom(ByteArray(32))).build(),
+        )
+        for (operation in operations) {
+            val source = MemorySource(image)
+            val result = FirmwareMetadataReader.read(source, base(source), bootPayload(source, operation))
+            assertEquals("", result.kernelVersion)
+            assertEquals("Only archive prefix may be read; never source-dependent operation blobs", 4, source.bytesRead)
+        }
+    }
+
     @Test fun cancellationIsNotConvertedToUnknown() {
         assertThrows(CancellationException::class.java) { FirmwareMetadata.optional<Unit> { throw CancellationException("test") } }
         assertNull(FirmwareMetadata.optional<Unit> { throw IOException("unavailable") })
@@ -227,10 +270,11 @@ class FirmwareMetadataTest {
 
     private fun extent(start: Long) = UpdateMetadata.Extent.newBuilder().setStartBlock(start).setNumBlocks(1).build()
 
-    private fun bootPayload(source: MemorySource, operation: UpdateMetadata.InstallOperation): Payload {
+    private fun bootPayload(source: MemorySource, operation: UpdateMetadata.InstallOperation, minor: Int = 0): Payload {
         val partition = UpdateMetadata.PartitionUpdate.newBuilder().setPartitionName("boot")
             .setNewPartitionInfo(UpdateMetadata.PartitionInfo.newBuilder().setSize(8192)).addOperations(operation).build()
-        return payload(source, UpdateMetadata.DeltaArchiveManifest.newBuilder().setBlockSize(4096).addPartitions(partition).build())
+        return payload(source, UpdateMetadata.DeltaArchiveManifest.newBuilder().setBlockSize(4096)
+            .setMinorVersion(minor).addPartitions(partition).build())
     }
 
     private fun payload(source: MemorySource, manifest: UpdateMetadata.DeltaArchiveManifest) =

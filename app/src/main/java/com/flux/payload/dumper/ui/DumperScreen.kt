@@ -36,7 +36,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
@@ -74,6 +73,7 @@ import com.flux.payload.dumper.ui.components.RelinkDialog
 import com.flux.payload.dumper.ui.components.SettingsDialog
 import com.flux.payload.dumper.ui.theme.FluxRadius
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
+import com.flux.payload.dumper.ui.theme.fluxOutlinedTextFieldColors
 import com.flux.payload.dumper.viewmodel.DumperViewModel
 import com.flux.payload.dumper.viewmodel.ParseState
 
@@ -295,12 +295,7 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit) {
         singleLine = true,
         shape = RoundedCornerShape(FluxRadius.Pill),
         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-        colors = TextFieldDefaults.colors(
-            focusedContainerColor = MaterialTheme.colorScheme.surface,
-            unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-            focusedIndicatorColor = Color.Transparent,
-            unfocusedIndicatorColor = Color.Transparent,
-        ),
+        colors = fluxOutlinedTextFieldColors(containerColor = MaterialTheme.colorScheme.surface),
     )
 }
 

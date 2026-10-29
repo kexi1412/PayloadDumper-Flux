@@ -1,5 +1,6 @@
 package com.flux.payload.dumper.core
 
+import chromeos_update_engine.UpdateMetadata.InstallOperation
 import com.flux.payload.dumper.model.ArchiveInfo
 import com.flux.payload.dumper.model.Payload
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
@@ -228,10 +229,11 @@ object FirmwareMetadataReader {
             }
             if (extents.none { (start, size) -> size > 0 && start < rangeEnd && start + size > rangeStart }) continue
             val expected = extents.fold(0L) { sum, (_, size) -> checkedEnd(sum, size, MAX_OP_BYTES.toLong()) }.toInt()
-            if (expected <= 0 || operation.srcExtentsCount != 0) return null
-            val kind = operation.type.name
-            if (kind !in setOf("REPLACE", "REPLACE_XZ", "REPLACE_BZ", "REPLACE_ZSTD", "ZERO")) return null
-            val decoded = decodedHeaderOps[operationIndex] ?: if (kind == "ZERO") ByteArray(expected) else {
+            if (expected <= 0 || PayloadOperations.unsupportedReason(operation) != null) return null
+            val kind = operation.type
+            // DISCARD has undefined contents, so it cannot prove boot metadata bytes.
+            if (kind == InstallOperation.Type.DISCARD) return null
+            val decoded = decodedHeaderOps[operationIndex] ?: if (kind == InstallOperation.Type.ZERO) ByteArray(expected) else {
                 if (!operation.hasDataOffset() || !operation.hasDataLength() || operation.dataLength !in 1L..MAX_OP_BYTES.toLong()) return null
                 val start = checkedEnd(payload.dataOffset, operation.dataOffset, payloadEnd)
                 checkedEnd(start, operation.dataLength, payloadEnd)
@@ -240,10 +242,9 @@ object FirmwareMetadataReader {
                 if (!operation.dataSha256Hash.isEmpty && !MessageDigest.getInstance("SHA-256").digest(bytes)
                         .contentEquals(operation.dataSha256Hash.toByteArray())) return null
                 when (kind) {
-                    "REPLACE" -> bytes
-                    "REPLACE_XZ" -> XZInputStream(ByteArrayInputStream(bytes), 64 * 1024).use { FirmwareMetadata.boundedRead(it, expected) }
-                    "REPLACE_BZ" -> BZip2CompressorInputStream(ByteArrayInputStream(bytes)).use { FirmwareMetadata.boundedRead(it, expected) }
-                    "REPLACE_ZSTD" -> Decompressor.zstd(bytes, expected)
+                    InstallOperation.Type.REPLACE -> bytes
+                    InstallOperation.Type.REPLACE_XZ -> XZInputStream(ByteArrayInputStream(bytes), 64 * 1024).use { FirmwareMetadata.boundedRead(it, expected) }
+                    InstallOperation.Type.REPLACE_BZ -> BZip2CompressorInputStream(ByteArrayInputStream(bytes)).use { FirmwareMetadata.boundedRead(it, expected) }
                     else -> return null
                 }
             }
