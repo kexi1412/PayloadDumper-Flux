@@ -205,9 +205,63 @@ class HttpSource private constructor(
     private val client: OkHttpClient,
     override val size: Long,
     private val fileName: String,
+    private val deadlineNanos: Long? = null,
 ) : PayloadSource {
 
     private val preferredChunkBytes = AtomicInteger(CHUNK_BYTES)
+    private val activeCalls = java.util.concurrent.ConcurrentHashMap.newKeySet<okhttp3.Call>()
+    private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Small metadata requests must not inherit the extraction client's long idle timeout. */
+    internal fun forParsing(timeoutMillis: Long = 30_000): HttpSource = forkForSmallReads(timeoutMillis)
+
+    /** Separate call ownership, not another size probe or another extraction connection pool. */
+    internal fun forMetadata(timeoutMillis: Long = 30_000): HttpSource = forkForSmallReads(timeoutMillis)
+
+    private fun forkForSmallReads(timeoutMillis: Long): HttpSource {
+        require(timeoutMillis in 1..86_400_000L)
+        checkReadAllowed()
+        return HttpSource(url, smallReadClient(client), size, fileName,
+            System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMillis)).also {
+            it.preferredChunkBytes.set(preferredChunkBytes.get())
+        }
+    }
+
+    private fun checkReadAllowed() {
+        if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException("HTTP archive read interrupted")
+        if (closed.get()) throw IOException("HTTP archive source closed")
+        if (deadlineNanos != null && deadlineNanos - System.nanoTime() <= 0) {
+            throw java.net.SocketTimeoutException("Firmware metadata time budget exceeded")
+        }
+    }
+
+    private fun pauseBeforeRetry(attempt: Int) {
+        checkReadAllowed()
+        val delay = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(RETRY_DELAY_MS * attempt)
+        val remaining = deadlineNanos?.let { it - System.nanoTime() } ?: delay
+        if (remaining > 0) java.util.concurrent.TimeUnit.NANOSECONDS.sleep(minOf(delay, remaining))
+        checkReadAllowed()
+    }
+
+    private inline fun <T> execute(request: Request, read: (okhttp3.Response) -> T): T {
+        checkReadAllowed()
+        val call = client.newCall(request)
+        deadlineNanos?.let { deadline ->
+            val remaining = deadline - System.nanoTime()
+            if (remaining <= 0) throw java.net.SocketTimeoutException("Firmware metadata time budget exceeded")
+            val configured = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(client.callTimeoutMillis.toLong())
+            call.timeout().timeout(if (configured > 0) minOf(configured, remaining) else remaining,
+                java.util.concurrent.TimeUnit.NANOSECONDS)
+        }
+        activeCalls.add(call)
+        try {
+            // close() may have raced with registration; never leave that call running unowned.
+            checkReadAllowed()
+            return call.execute().use { read(it) }
+        } finally {
+            activeCalls.remove(call)
+        }
+    }
 
     override fun fileName(): String = fileName
 
@@ -233,6 +287,7 @@ class HttpSource private constructor(
         // and remember that limit for every later read from this source; otherwise every boot
         // operation would repeat the same multi-minute failure ladder.
         while (left > 0) {
+            checkReadAllowed()
             chunkLimit = minOf(chunkLimit, preferredChunkBytes.get())
             val chunk = minOf(left, chunkLimit)
             val end = pos + chunk - 1
@@ -243,7 +298,7 @@ class HttpSource private constructor(
                 .build()
             try {
                 var read = 0
-                client.newCall(req).execute().use { resp ->
+                execute(req) { resp ->
                     validateRange(resp, pos, end, size)
                     val body = resp.body ?: throw IOException("Empty body")
                     val decoded = decodeRangeBody(body, resp.header("Content-Encoding"), chunk.toLong())
@@ -269,30 +324,35 @@ class HttpSource private constructor(
                 emptyAttempts = 0
                 transportAttempts = 0
             } catch (e: ShortReadException) {
+                checkReadAllowed()
                 val got = if (e.resumable) e.read else 0
                 if (got > 0) {
                     // A validated identity Range is ordered bytes beginning exactly at `pos`.
                     // Keep that prefix, then request only the missing suffix.
                     pos += got
                     left -= got
-                    chunkLimit = lowerChunkLimit(maxOf(MIN_CHUNK_BYTES, minOf(chunkLimit, got)))
+                    if (chunk > MIN_CHUNK_BYTES) {
+                        chunkLimit = lowerChunkLimit(maxOf(MIN_CHUNK_BYTES, minOf(chunk, got)))
+                    }
                     emptyAttempts = 0
                     transportAttempts = 0
                 } else {
                     if (++emptyAttempts > MAX_EMPTY_RETRIES) throw e
-                    val fallback = if (chunkLimit > FALLBACK_CHUNK_BYTES) {
-                        FALLBACK_CHUNK_BYTES
-                    } else {
-                        maxOf(MIN_CHUNK_BYTES, chunkLimit / 2)
+                    // A failed four-byte magic read says nothing about the CDN's maximum
+                    // range size. Only a genuinely large failed request can lower the limit.
+                    if (chunk > MIN_CHUNK_BYTES) {
+                        val fallback = if (chunk > FALLBACK_CHUNK_BYTES) FALLBACK_CHUNK_BYTES
+                            else maxOf(MIN_CHUNK_BYTES, chunk / 2)
+                        chunkLimit = lowerChunkLimit(fallback)
                     }
-                    chunkLimit = lowerChunkLimit(fallback)
-                    Thread.sleep(RETRY_DELAY_MS * emptyAttempts)
+                    pauseBeforeRetry(emptyAttempts)
                 }
             } catch (e: IOException) {
+                checkReadAllowed()
                 // A malformed range cannot be repaired by retrying it as though it were bytes 0..N.
                 if (e is java.net.ProtocolException) throw e
                 if (++transportAttempts >= MAX_TRANSPORT_RETRIES) throw e
-                Thread.sleep(RETRY_DELAY_MS * transportAttempts)
+                pauseBeforeRetry(transportAttempts)
             }
         }
     }
@@ -306,7 +366,10 @@ class HttpSource private constructor(
         }
     }
 
-    override fun close() { /* OkHttp responses are closed per-request */ }
+    override fun close() {
+        closed.set(true)
+        activeCalls.forEach { it.cancel() }
+    }
 
     companion object {
         private const val MAX_TRANSPORT_RETRIES = 3
@@ -323,18 +386,44 @@ class HttpSource private constructor(
             cause: Throwable? = null,
         ) : IOException(message, cause)
 
-        /** Probe total size + filename with a 1-byte ranged request, then build the source. */
+        private const val SMALL_READ_TIMEOUT_MS = 5_000L
+
+        private fun smallReadClient(client: OkHttpClient): OkHttpClient {
+            val configured = client.readTimeoutMillis.toLong()
+            val idle = if (configured > 0) minOf(configured, SMALL_READ_TIMEOUT_MS) else SMALL_READ_TIMEOUT_MS
+            return client.newBuilder().readTimeout(idle, java.util.concurrent.TimeUnit.MILLISECONDS).build()
+        }
+
+        /** Probe total size + filename without inheriting an extraction-length stall timeout. */
         fun open(url: String, client: OkHttpClient): HttpSource {
             val req = Request.Builder().url(url)
                 .header("Range", "bytes=0-0")
                 .header("Accept-Encoding", "identity")
                 .header("Cache-Control", "no-transform")
                 .build()
-            client.newCall(req).execute().use { resp ->
-                val range = validateRange(resp, 0, 0, null)
-                val name = HttpArchiveHeaders.fileName(resp.header("Content-Disposition"), resp.request.url.toString())
-                return HttpSource(resp.request.url.toString(), client, range.total, name)
+            val probeClient = smallReadClient(client)
+            for (attempt in 1..MAX_TRANSPORT_RETRIES) {
+                if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException("HTTP probe interrupted")
+                val call = probeClient.newCall(req)
+                val configured = client.callTimeoutMillis.toLong()
+                call.timeout().timeout(if (configured > 0) minOf(configured, SMALL_READ_TIMEOUT_MS) else SMALL_READ_TIMEOUT_MS,
+                    java.util.concurrent.TimeUnit.MILLISECONDS)
+                val response = try {
+                    call.execute()
+                } catch (e: IOException) {
+                    if (e is java.net.ProtocolException || Thread.currentThread().isInterrupted || attempt == MAX_TRANSPORT_RETRIES) throw e
+                    Thread.sleep(RETRY_DELAY_MS * attempt)
+                    continue
+                }
+                response.use { resp ->
+                    // Range validation failures are not transport failures: never retry bad bytes.
+                    val range = validateRange(resp, 0, 0, null)
+                    val name = HttpArchiveHeaders.fileName(resp.header("Content-Disposition"), resp.request.url.toString())
+                    // Extraction retains the caller's original timeout policy and connection pool.
+                    return HttpSource(resp.request.url.toString(), client, range.total, name)
+                }
             }
+            throw IOException("HTTP range probe failed")
         }
 
         private class DecodedBody(val stream: java.io.InputStream, val encoded: Boolean)

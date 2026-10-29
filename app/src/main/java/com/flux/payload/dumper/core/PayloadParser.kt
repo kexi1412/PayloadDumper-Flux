@@ -20,18 +20,21 @@ object PayloadParser {
 
     fun parse(source: PayloadSource): Payload {
         val payloadOffset = ZipLocator.findPayloadOffset(source)
-        var p = payloadOffset
-
-        val magic = source.readFully(p, 4); p += 4
+        if (payloadOffset < 0 || payloadOffset > source.size - 24) {
+            throw IOException("Truncated payload header")
+        }
+        // One positioned read, not four HTTP round trips for a 24-byte header.
+        val header = java.nio.ByteBuffer.wrap(source.readFully(payloadOffset, 24))
+            .order(java.nio.ByteOrder.BIG_ENDIAN)
+        val magic = ByteArray(4).also { header.get(it) }
         if (String(magic, StandardCharsets.US_ASCII) != MAGIC) {
             throw IOException("Invalid magic — not a valid payload.bin")
         }
-
-        val version = source.readFully(p, 8).beLong(); p += 8
+        val version = header.long
         if (version != FORMAT_VERSION) throw IOException("Unsupported payload version: $version")
-
-        val manifestSize = source.readFully(p, 8).beLong(); p += 8
-        val signatureSize = source.readFully(p, 4).beInt(); p += 4
+        val manifestSize = header.long
+        val signatureSize = header.int
+        var p = payloadOffset + 24
         if (manifestSize <= 0 || manifestSize > 32L * 1024 * 1024) {
             throw IOException("Implausible manifest size: $manifestSize (maximum 32 MiB)")
         }

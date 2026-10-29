@@ -24,14 +24,16 @@ object FirmwareMetadataReader {
     private const val BOOT_FETCH_BUDGET = 64L * 1024 * 1024
     private val BUILD_PROPERTIES = listOf("system/system/build.prop", "system/build.prop", "SYSTEM/build.prop", "build.prop")
 
-    fun read(source: PayloadSource, base: ArchiveInfo, payload: Payload? = null): ArchiveInfo {
+    fun read(
+        source: PayloadSource,
+        base: ArchiveInfo,
+        payload: Payload? = null,
+        includeKernel: Boolean = true,
+    ): ArchiveInfo {
         val manifestFields = FirmwareFields(securityPatchLevel = FirmwareMetadata.cleanPatch(
             if (payload?.manifest?.hasSecurityPatchLevel() == true) payload.manifest.securityPatchLevel else base.securityPatchLevel
         ))
-        val entries = FirmwareMetadata.optional {
-            if (source.size >= 4 && source.readFully(0, 4).contentEquals(byteArrayOf(0x50, 0x4b, 3, 4)))
-                ZipScanner.scanEntries(source) else emptyList()
-        }.orEmpty()
+        val entries = zipEntries(source)
         var fields = FirmwareFields()
         fun uniqueEntry(name: String) = entries.filter { it.name == name }.singleOrNull()
         uniqueEntry(METADATA_PB)?.let { entry ->
@@ -52,9 +54,34 @@ object FirmwareMetadataReader {
             }
         }
         fields = fields.fallback(manifestFields)
+        val basic = base.copy(
+            androidVersion = fields.androidVersion,
+            securityPatchLevel = fields.securityPatchLevel,
+            kernelVersion = fields.kernelVersion,
+            fingerprint = fields.fingerprint,
+        )
+        return if (includeKernel) readKernel(source, basic, payload, entries) else basic
+    }
 
-        // A second, strictly bounded stage. No system/vendor filesystem is downloaded.
-        val boot = FirmwareMetadata.optional {
+    /** Optional second stage. The caller can publish partitions before any boot blobs are read. */
+    fun readKernel(source: PayloadSource, base: ArchiveInfo, payload: Payload? = null): ArchiveInfo =
+        ParseReadCache(source).use { input -> readKernel(input, base, payload, zipEntries(input)) }
+
+    private fun zipEntries(source: PayloadSource): List<ZipEntryInfo> = FirmwareMetadata.optional {
+        if (source.size >= 4 && source.readFully(0, 4).contentEquals(byteArrayOf(0x50, 0x4b, 3, 4)))
+            ZipScanner.scanEntries(source) else emptyList()
+    }.orEmpty()
+
+    private fun readKernel(
+        source: PayloadSource,
+        base: ArchiveInfo,
+        payload: Payload?,
+        entries: List<ZipEntryInfo>,
+    ): ArchiveInfo {
+        var fields = FirmwareFields(base.androidVersion, base.securityPatchLevel, base.kernelVersion, base.fingerprint)
+        // No system/vendor filesystem is downloaded, and existing target metadata wins over
+        // boot-header fallbacks (especially a full patch date versus a month-only boot field).
+        val bootFields = FirmwareMetadata.optional {
             if (payload != null) {
                 val payloadEntry = entries.filter { it.name.equals("payload.bin", true) }.singleOrNull()
                 val end = if (payloadEntry == null) source.size else {
@@ -66,12 +93,10 @@ object FirmwareMetadataReader {
             } else {
                 // Do not confuse vendor_boot/init_boot (ramdisks) or recovery kernels with boot.
                 val entry = entries.filter { it.name.substringAfterLast('/').lowercase(Locale.ROOT) == "boot.img" }.singleOrNull()
-                entry?.let { readZipEntry(source, it, MAX_BOOT_BYTES) }
+                entry?.let { FirmwareMetadata.fromBootImage(readZipEntry(source, it, MAX_BOOT_BYTES)) }
             }
         }
-        if (boot != null) {
-            FirmwareMetadata.optional { FirmwareMetadata.fromBootImage(boot) }?.let { fields = fields.fallback(it) }
-        }
+        bootFields?.let { fields = fields.fallback(it) }
         return base.copy(
             androidVersion = fields.androidVersion,
             securityPatchLevel = fields.securityPatchLevel,
@@ -140,36 +165,60 @@ object FirmwareMetadataReader {
         }
     }
 
-    private fun readPayloadBoot(source: PayloadSource, payload: Payload, payloadEnd: Long): ByteArray? {
+    private fun readPayloadBoot(source: PayloadSource, payload: Payload, payloadEnd: Long): FirmwareFields? {
         val boot = payload.manifest.partitionsList.filter { it.partitionName == "boot" }.singleOrNull() ?: return null
         if (!boot.hasNewPartitionInfo() || !boot.newPartitionInfo.hasSize()) return null
         val partitionSize = boot.newPartitionInfo.size
         if (partitionSize < 48 || payload.blockSize <= 0) return null
         val budget = Budget()
-        val prefix = reconstructPrefix(source, payload, payloadEnd, boot, minOf(4096L, partitionSize).toInt(), budget) ?: return null
+        // The header pass often needs an entire compressed 2 MiB operation. Retain only its
+        // validated decoded bytes (bounded to one MAX_OP_BYTES budget), not a second HTTP copy.
+        val decodedHeaderOps = mutableMapOf<Int, ByteArray>()
+        val prefix = reconstructRange(source, payload, payloadEnd, boot, minOf(4096L, partitionSize).toInt(),
+            budget, decodedHeaderOps, retainDecoded = true) ?: return null
         val header = FirmwareMetadata.bootHeader(prefix) ?: return null
         val length = header.kernelOffset.toLong() + header.kernelSize
         if (length > partitionSize || length > MAX_BOOT_BYTES) return null
-        return reconstructPrefix(source, payload, payloadEnd, boot, length.toInt(), budget)
+        val uts = FirmwareMetadata.optional {
+            // This normally reuses the already-decoded header operation. No guessed percentage,
+            // partial-XZ output, operation-order assumptions or scanning of ramdisk contents.
+            val kernelHeader = reconstructRange(source, payload, payloadEnd, boot,
+                minOf(Arm64KernelUts.HEADER_BYTES, header.kernelSize), budget, decodedHeaderOps,
+                retainDecoded = true, rangeStart = header.kernelOffset.toLong()) ?: return@optional null
+            val section = Arm64KernelUts.dataSection(kernelHeader, header.kernelSize) ?: return@optional null
+            val data = reconstructRange(source, payload, payloadEnd, boot, section.size, budget, decodedHeaderOps,
+                retainDecoded = true, rangeStart = header.kernelOffset.toLong() + section.offset) ?: return@optional null
+            Arm64KernelUts.release(data)
+        }
+        // Empty is a proven conflict, not a reason to accept a possibly unrelated banner.
+        if (uts != null) return header.fields.copy(kernelVersion = uts)
+        val image = reconstructRange(source, payload, payloadEnd, boot, length.toInt(), budget, decodedHeaderOps)
+            ?: return null
+        return FirmwareMetadata.fromBootImage(image)
     }
 
     /**
-     * Reconstruct only a required boot prefix, scattering decoded bytes through EVERY
+     * Reconstruct only a required boot range, scattering decoded bytes through EVERY
      * dst_extent. Coverage must be complete; source-dependent or unknown operations
-     * never become zero-filled fake firmware. Non-intersecting tail operations are skipped.
+     * never become zero-filled fake firmware. Non-intersecting operations are skipped.
      */
-    private fun reconstructPrefix(
+    private fun reconstructRange(
         source: PayloadSource,
         payload: Payload,
         payloadEnd: Long,
         partition: chromeos_update_engine.UpdateMetadata.PartitionUpdate,
         length: Int,
         budget: Budget,
+        decodedHeaderOps: MutableMap<Int, ByteArray>,
+        retainDecoded: Boolean = false,
+        rangeStart: Long = 0,
     ): ByteArray? {
         if (length <= 0 || length > MAX_BOOT_BYTES) return null
+        val rangeEnd = checkedEnd(rangeStart, length.toLong(), partition.newPartitionInfo.size)
         val output = ByteArray(length)
         val covered = mutableListOf<Pair<Int, Int>>()
-        for (operation in partition.operationsList) {
+        var retainedBytes = decodedHeaderOps.values.sumOf { it.size }
+        for ((operationIndex, operation) in partition.operationsList.withIndex()) {
             FirmwareMetadata.checkCancelled()
             val extents = operation.dstExtentsList.map { extent ->
                 val start = multiply(extent.startBlock, payload.blockSize)
@@ -177,12 +226,12 @@ object FirmwareMetadataReader {
                 checkedEnd(start, size, partition.newPartitionInfo.size)
                 start to size
             }
-            if (extents.none { (start, size) -> size > 0 && start < length }) continue
+            if (extents.none { (start, size) -> size > 0 && start < rangeEnd && start + size > rangeStart }) continue
             val expected = extents.fold(0L) { sum, (_, size) -> checkedEnd(sum, size, MAX_OP_BYTES.toLong()) }.toInt()
             if (expected <= 0 || operation.srcExtentsCount != 0) return null
             val kind = operation.type.name
             if (kind !in setOf("REPLACE", "REPLACE_XZ", "REPLACE_BZ", "REPLACE_ZSTD", "ZERO")) return null
-            val decoded = if (kind == "ZERO") ByteArray(expected) else {
+            val decoded = decodedHeaderOps[operationIndex] ?: if (kind == "ZERO") ByteArray(expected) else {
                 if (!operation.hasDataOffset() || !operation.hasDataLength() || operation.dataLength !in 1L..MAX_OP_BYTES.toLong()) return null
                 val start = checkedEnd(payload.dataOffset, operation.dataOffset, payloadEnd)
                 checkedEnd(start, operation.dataLength, payloadEnd)
@@ -199,12 +248,20 @@ object FirmwareMetadataReader {
                 }
             }
             if (decoded.size != expected) return null
+            if (retainDecoded && operationIndex !in decodedHeaderOps && expected <= MAX_OP_BYTES - retainedBytes) {
+                decodedHeaderOps[operationIndex] = decoded
+                retainedBytes += expected
+            }
             var cursor = 0
             for ((start, size) in extents) {
-                if (size > 0 && start < length) {
-                    val count = minOf(size, length.toLong() - start).toInt()
-                    decoded.copyInto(output, start.toInt(), cursor, cursor + count)
-                    covered.add(start.toInt() to (start.toInt() + count))
+                val from = maxOf(start, rangeStart)
+                val to = minOf(start + size, rangeEnd)
+                if (from < to) {
+                    val count = (to - from).toInt()
+                    val destination = (from - rangeStart).toInt()
+                    val decodedStart = cursor + (from - start).toInt()
+                    decoded.copyInto(output, destination, decodedStart, decodedStart + count)
+                    covered.add(destination to destination + count)
                 }
                 cursor += size.toInt()
             }

@@ -41,6 +41,8 @@ The reader supports `META-INF/com/android/metadata.pb` and text `metadata` in ST
 
 Kernel inspection reconstructs the needed boot prefix from full-payload operations and maps every destination extent. It does not use the reference project's fixed percentage sample. Metadata is limited to 1 MiB per entry; boot inspection to 64 MiB, 16 MiB per operation and a 64 MiB read budget. XZ inspection also has a decoder memory limit. Unsupported/delta boot data, absent metadata or an exceeded budget leaves fields unavailable without blocking normal extraction. A bare `payload.bin` often cannot supply an Android version or fingerprint.
 
+**HTTP parsing no longer waits for boot/kernel inspection.** Partitions and basic firmware metadata become ready for extraction first; the kernel version is filled in asynchronously. Its HTTP source has independent cancellation and a 30-second cumulative network deadline, so cancellation never aborts extraction calls. A timeout leaves the optional field unavailable. Local parsing remains synchronous. A bounded, parse-scoped cache removes repeated directory/header requests and is released after parsing. Size probes retry transient transport failures; fast parsing and kernel reads use a 5-second idle timeout with separate 30-second cumulative deadlines rather than the extraction client's 60-second idle wait. Image extraction keeps its existing timeout policy.
+
 ## Extraction support
 
 - **Full A/B OTA:** raw `payload.bin`, or an OTA ZIP with a STORED `payload.bin`.
