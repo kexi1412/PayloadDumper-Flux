@@ -6,7 +6,8 @@ import android.graphics.Bitmap
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
-import android.view.View
+import android.view.Window
+import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
@@ -31,21 +32,19 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.captureToImage
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.platform.graphics.HardwareRendererCompat
 import com.flux.payload.dumper.R
 import com.flux.payload.dumper.model.SourceMode
 import com.flux.payload.dumper.model.SourceSelection
@@ -63,18 +62,18 @@ import com.flux.payload.dumper.ui.theme.LightFlux
 import com.flux.payload.dumper.ui.theme.LightSurface
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
 import com.flux.payload.dumper.ui.theme.PayloadDumperFluxTheme
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.roundToInt
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
 class FluxThemeRenderingTest {
-    @get:Rule val compose = createComposeRule()
+    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test fun systemNightChangesAndExplicitOverrideSelectMatchingPalettes() {
@@ -106,14 +105,12 @@ class FluxThemeRenderingTest {
 
     @Test fun darkCardPaintDoesNotShowContrastingContentBehindIt() {
         var backdrop by mutableStateOf(Color.Magenta)
-        lateinit var composeView: View
-        var insetPx = 0
+        var backgroundGapPx = 0
         val cardDraws = AtomicInteger()
         compose.setContent {
             PayloadDumperFluxTheme(darkTheme = true) {
-                val view = LocalView.current
-                val inset = with(LocalDensity.current) { 8.dp.roundToPx() }
-                SideEffect { composeView = view; insetPx = inset }
+                val gap = with(LocalDensity.current) { 16.dp.roundToPx() }
+                SideEffect { backgroundGapPx = gap }
                 Box(
                     Modifier.fillMaxSize().testTag("card_backdrop")
                         .background(backdrop).padding(24.dp),
@@ -128,18 +125,19 @@ class FluxThemeRenderingTest {
             }
         }
         fun assertCard(expectedBackdrop: Color, suffix: String) {
-            // Capture uses node coordinates from BEFORE its own decorView redraw. For a
-            // brand-new, otherwise empty composition, first commit the actual Compose View
-            // so those coordinates and retained graphics layers belong to the rendered frame.
-            compose.waitForIdle()
-            awaitCommittedComposeFrame(composeView)
+            // The test host must match MainActivity's post-splash, no-action-bar theme.
+            // A native action bar can obscure a node even when its Compose bounds are valid.
+            assertProductionHostTheme()
             val card = compose.onNodeWithTag("opaque_card").assertIsDisplayed().assertHeightIsEqualTo(72.dp)
-            assertTrue("CardGroup's drawContent was never called", cardDraws.get() > 0)
             val cardBounds = card.fetchSemanticsNode().boundsInRoot
             val backdropBounds = compose.onNodeWithTag("card_backdrop").fetchSemanticsNode().boundsInRoot
-            Log.i("FluxThemeRegression", "card=$cardBounds backdrop=$backdropBounds draws=${cardDraws.get()}")
             val fullFrame = capturePixels("card_backdrop", "card-frame-$suffix")
-            assertPixel(expectedBackdrop, fullFrame[fullFrame.width / 2, insetPx])
+            assertTrue("CardGroup's drawContent was never called", cardDraws.get() > 0)
+            Log.i("FluxThemeRegression", "card=$cardBounds backdrop=$backdropBounds draws=${cardDraws.get()}")
+            // Probe application content below the card, never system status-bar chrome.
+            val backgroundY = (cardBounds.bottom - backdropBounds.top).roundToInt() + backgroundGapPx
+            assertTrue("The content-background sample is outside the frame", backgroundY in 0 until fullFrame.height)
+            assertPixel(expectedBackdrop, fullFrame[fullFrame.width / 2, backgroundY])
             val centerX = (cardBounds.center.x - backdropBounds.left).roundToInt()
             val centerY = (cardBounds.center.y - backdropBounds.top).roundToInt()
             assertPixel(DarkFlux.card, fullFrame[centerX, centerY])
@@ -249,6 +247,7 @@ class FluxThemeRenderingTest {
     }
 
     @Test fun nativeWindowAndSplashColorsMatchTheSystemNightConfiguration() {
+        assertProductionHostTheme()
         listOf(false, true).forEach { dark ->
             val configuration = nightConfiguration(context.resources.configuration, dark)
             val resources = context.createConfigurationContext(configuration).resources
@@ -258,20 +257,10 @@ class FluxThemeRenderingTest {
         }
     }
 
-    private fun awaitCommittedComposeFrame(view: View) {
-        val drawingWasEnabled = HardwareRendererCompat.isDrawingEnabled()
-        try {
-            HardwareRendererCompat.setDrawingEnabled(true)
-            val committed = CountDownLatch(1)
-            compose.runOnUiThread {
-                check(view.isAttachedToWindow && view.isHardwareAccelerated)
-                view.viewTreeObserver.registerFrameCommitCallback { committed.countDown() }
-                // Invalidate AndroidComposeView itself, not only the window's decorView.
-                view.invalidate()
-            }
-            assertTrue("The Compose View did not commit a rendered frame", committed.await(5, TimeUnit.SECONDS))
-        } finally {
-            HardwareRendererCompat.setDrawingEnabled(drawingWasEnabled)
+    private fun assertProductionHostTheme() {
+        compose.runOnIdle {
+            assertNull("The test host must use Theme.PayloadDumperFlux.App, not the splash theme", compose.activity.actionBar)
+            assertFalse("A native action bar must not cover Compose test content", compose.activity.window.hasFeature(Window.FEATURE_ACTION_BAR))
         }
     }
 

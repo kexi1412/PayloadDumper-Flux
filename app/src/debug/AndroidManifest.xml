@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!--
+            ui-test-manifest supplies a bare ComponentActivity without a theme. Unlike
+            MainActivity, it never calls installSplashScreen() to apply postSplashScreenTheme.
+            Use the production post-splash theme directly, or its inherited native action
+            bar obscures Compose content under API 35 edge-to-edge rendering.
+        -->
+        <activity
+            android:name="androidx.activity.ComponentActivity"
+            android:theme="@style/Theme.PayloadDumperFlux.App" />
+    </application>
+</manifest>
