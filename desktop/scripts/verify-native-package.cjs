@@ -26,6 +26,8 @@ assert(installerData.length < cap, `Installer ${installerData.length} bytes must
 const executable = path.join(release, 'payload-dumper-flux.exe');
 const exeData = fs.readFileSync(executable);
 assert(exeData.subarray(0, 2).toString() === 'MZ');
+const { expectedNsisImage } = require('./tauri-bundle-info.cjs');
+const nsisImage = expectedNsisImage(exeData);
 const out = path.join(root, 'release');
 fs.mkdirSync(out, { recursive: true });
 const installerName = `PayloadDumper-Flux-PC-${pkg.version}-x64-setup.exe`;
@@ -55,7 +57,7 @@ assert(portableData.length < cap, `Portable ZIP ${portableData.length} bytes mus
 const portableName = `PayloadDumper-Flux-PC-${pkg.version}-x64-portable.zip`;
 fs.writeFileSync(path.join(out, portableName), portableData);
 const records = [{ name: installerName, bytes: installerData.length, sha256: sha(installerData) }, { name: portableName, bytes: portableData.length, sha256: sha(portableData) }];
-const manifest = { version: pkg.version, framework: 'Tauri + native Rust firmware engine', systemDependency: 'Windows system WebView2 runtime', byteLimit: cap, installedExecutableBytes: exeData.length, executableSHA256: sha(exeData), portableEntries: entries.map(e => e.name), files: records };
+const manifest = { version: pkg.version, framework: 'Tauri + native Rust firmware engine', systemDependency: 'Windows system WebView2 runtime', byteLimit: cap, installedExecutableBytes: exeData.length, executableSHA256: sha(exeData), portableExecutableSHA256: sha(exeData), nsisExecutableSHA256: sha(nsisImage.data), bundleInfoPatch: { cliVersion: '2.12.4', bundlerVersion: '2.10.4', markerOffset: nsisImage.offset, changedBytes: nsisImage.changedBytes, occurrenceCount: nsisImage.occurrenceCount }, portableEntries: entries.map(e => e.name), files: records };
 fs.writeFileSync(path.join(out, 'native-package.json'), JSON.stringify(manifest, null, 2) + '\n');
 fs.writeFileSync(path.join(out, 'SHA256SUMS-native.txt'), records.map(r => `${r.sha256}  ${r.name}`).join('\n') + '\n');
 fs.writeFileSync(path.join(out, 'native-release-notes.md'), `# PC ${pkg.version}\n\nNative Windows x64 build; the existing workbench now uses system WebView2 and an in-process Rust extraction engine. No Chromium, Node.js or Java runtime is bundled or downloaded by the installer.\n\n- Installer: ${(installerData.length / 1_000_000).toFixed(2)} MB (${installerData.length} bytes).\n- Portable ZIP: ${(portableData.length / 1_000_000).toFixed(2)} MB (${portableData.length} bytes).\n- Uses the system WebView2 runtime available on supported Windows 10/11 systems.\n- Supports operation-based full payload extraction, local/HTTP firmware, hash checks and identity-bound resume.\n\nSHA-256 checksums are attached.\n`);

@@ -97,7 +97,9 @@ jobs:
           $installed = Join-Path $install 'payload-dumper-flux.exe'
           if (!(Test-Path -LiteralPath $installed)) { throw 'Installed application is missing' }
           $record = Get-Content desktop/release/native-package.json -Raw | ConvertFrom-Json
-          if ((Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash.ToLowerInvariant() -ne $record.executableSHA256) { throw 'Installer did not deploy the verified native executable' }
+          $actualSHA = (Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "Installed native SHA256=$actualSHA; expected NSIS SHA256=$($record.nsisExecutableSHA256); portable SHA256=$($record.portableExecutableSHA256)"
+          if ($actualSHA -ne $record.nsisExecutableSHA256) { throw 'Installer did not deploy the exact expected NSIS-marked native executable' }
           $env:FLUX_TEST_APP = $installed
           pnpm --dir desktop test:ui
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -106,6 +108,7 @@ jobs:
           pnpm --dir desktop test:engine
           exit $LASTEXITCODE
       - name: Upload compact Windows packages
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: PayloadDumper-Flux-PC-Native-Windows

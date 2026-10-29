@@ -32,6 +32,8 @@
 
 默认输出到下载目录的 `PayloadDumper-Flux/firmware_<身份摘要>/`，嵌套 ZIP 使用独立子目录。Windows 保留文件名、路径穿越、大小写冲突及越界输出会被拒绝。
 
+内核元数据当前只识别 raw/gzip 中唯一的 Linux banner；LZ4 内核和 ARM64 UTS 专项定位尚未移植，遇到这类信息留空，不影响镜像字节提取。ZIP 名称需为 UTF-8/ASCII；加密、多卷及其它压缩方式明确拒绝。流式磁盘缓存单项上限 32GiB、总预算 48GiB。
+
 ## 使用发行包
 
 1. 运行 `PayloadDumper-Flux-PC-<版本>-x64-setup.exe` 进行当前用户安装；或完整解压便携 ZIP，运行其中的原生主程序。
