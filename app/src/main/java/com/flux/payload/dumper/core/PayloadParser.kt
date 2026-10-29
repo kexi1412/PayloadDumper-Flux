@@ -18,15 +18,15 @@ object PayloadParser {
     private const val MAGIC = "CrAU"
     private const val FORMAT_VERSION = 2L
 
-    fun parse(source: PayloadSource): Payload {
+    fun parse(source: PayloadSource, detectedPrefix: ByteArray? = null): Payload {
         if (source.size < 24) throw IOException("Truncated payload header")
-        val prefix = source.readFully(0, 24)
+        val prefix = detectedPrefix ?: source.readFully(0, 24)
         val payloadOffset = ZipLocator.findPayloadOffset(source, prefix)
         if (payloadOffset < 0 || payloadOffset > source.size - 24) {
             throw IOException("Truncated payload header")
         }
         // Reuse the sniffed CrAU header: direct payloads still need only one fixed-header read.
-        val header = java.nio.ByteBuffer.wrap(if (payloadOffset == 0L) prefix else source.readFully(payloadOffset, 24))
+        val header = java.nio.ByteBuffer.wrap(if (payloadOffset == 0L && prefix.size >= 24) prefix else source.readFully(payloadOffset, 24))
             .order(java.nio.ByteOrder.BIG_ENDIAN)
         val magic = ByteArray(4).also { header.get(it) }
         if (String(magic, StandardCharsets.US_ASCII) != MAGIC) {
