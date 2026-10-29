@@ -120,7 +120,7 @@ private class Controller(private val protocol: Protocol) {
     }
     private fun open(spec: SourceSpec, settings: Options): PayloadSource {
         if (spec.kind == "file") return FileSource(File(spec.value))
-        val agent = settings.userAgent.ifBlank { "PayloadDumperFlux/3.1.0-pc.1 (Desktop)" }
+        val agent = settings.userAgent.ifBlank { "PayloadDumperFlux/3.1.0-pc.2 (Desktop)" }
         val client = OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS).retryOnConnectionFailure(true)

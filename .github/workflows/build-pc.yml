@@ -2,7 +2,7 @@ name: Build PC
 
 on:
   push:
-    branches: [pc]
+    branches: [main]
     paths:
       - 'desktop/**'
       - 'app/src/main/java/com/flux/payload/dumper/core/**'
@@ -52,6 +52,8 @@ jobs:
         run: pnpm --dir desktop test:engine
       - name: Typecheck and build renderer
         run: pnpm --dir desktop build
+      - name: Verify real Electron UI and responsive layouts
+        run: pnpm --dir desktop test:ui
       - name: Package Windows portable app
         run: pnpm --dir desktop package:win
       - name: Upload Windows portable artifacts
@@ -63,6 +65,13 @@ jobs:
             desktop/release/*.zip
           if-no-files-found: error
           retention-days: 14
+      - name: Upload desktop UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PayloadDumper-Flux-PC-UI
+          path: desktop/.cache/ui-screenshots-*/
+          if-no-files-found: warn
       - name: Upload engine test results
         if: always()
         uses: actions/upload-artifact@v4

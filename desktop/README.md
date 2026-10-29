@@ -1,6 +1,6 @@
 # Payload Dumper · Flux — PC
 
-`pc` 是桌面版独立分支，基于 Android `feat/meizu` 的提取引擎。当前交付目标是 **Windows 10 / 11 x64**，使用 Electron + React 界面与独立 JVM worker；发行包自带 Java 运行时，不需要 Android SDK、Java 安装或 GitHub 密钥。
+Android、PC 与历史修复分支已合并到 `main`，桌面和安卓共用同一提取核心。当前交付目标是 **Windows 10 / 11 x64**，使用 Electron + React 界面与独立 JVM worker；发行包自带 Java 运行时，不需要 Android SDK、Java 安装或 GitHub 密钥。
 
 ## 界面与功能
 
@@ -21,7 +21,7 @@
 | 直接镜像 ZIP、华为 UPDATE.APP | 按条目提取，校验声明长度 |
 | 华为 / 荣耀嵌套 SD 升级 ZIP | 流式批量提取，隔离内层归档目录，核对长度 / 可用 CRC32 |
 | 块式 OTA | 展示并提取原始条目，不自动将 `.new.dat` 转换为文件系统镜像 |
-| 需要旧镜像的增量 OTA | 明确报错，不生成伪完整镜像 |
+| 需要旧镜像的增量 OTA | 按真实操作和 source 引用判断，不按 minor 版本号一刀切；明确指出依赖旧镜像的操作，不生成伪完整镜像 |
 
 默认输出到系统下载目录的 `PayloadDumper-Flux/<固件名>_<身份摘要>/`。目录按固件隔离；Windows 保留名称、越界路径、同名输出冲突会被拒绝。内层 ZIP 再分独立子目录。
 
@@ -86,7 +86,7 @@ desktop/
 
 ## 自动构建与验证
 
-[Build PC 工作流](../.github/workflows/build-pc.yml) 只处理 `pc` 分支，构建 Windows portable EXE / ZIP 并上传 Actions Artifact，不触发 Android 主分支 Release。
+[Build PC 工作流](<../.github/workflows/build-pc.yml>) 自动处理 `main` 的桌面及共享核心更新，构建 Windows portable EXE / ZIP 并上传 Actions Artifact。Android APK 使用同一主分支的独立工作流。
 
 - `pnpm test`：输入检查、输出目录边界、JSONL 生命周期、UTF-8 分片、错误及超时。
 - JVM `test`：直接复用原引擎的纯 JVM 核心回归。

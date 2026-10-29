@@ -1,6 +1,6 @@
-# Payload Dumper · Flux — PC branch
+# Payload Dumper · Flux — Android + PC
 
-This `pc` branch adds a **Windows x64 desktop application** with a new-api-inspired workbench, local/HTTP firmware sources, live extraction progress and the shared Kotlin firmware engine. Android remains available below and on the original branches.
+The `main` branch now contains both **Android** and **Windows x64 desktop** applications. Previous feature, fix, smoke and PC branch histories are merged here. Both apps use the same validated Kotlin firmware extraction core; desktop adds a new-api-inspired workbench.
 
 **[PC usage and build instructions](<desktop/README.md>)** · **[Windows build workflow](<.github/workflows/build-pc.yml>)**
 
@@ -14,7 +14,7 @@ This `pc` branch adds a **Windows x64 desktop application** with a new-api-inspi
 
 Extract partition images on Android — from a **picked local file** or an HTTP OTA direct link.
 
-![Version](https://img.shields.io/badge/Version-3.0.0-0080FF)
+![Version](https://img.shields.io/badge/Version-3.0.6-0080FF)
 ![Platform](https://img.shields.io/badge/Android-11%2B-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.1-7F52FF?logo=kotlin&logoColor=white)
 ![UI](https://img.shields.io/badge/UI-COUI17%20%2F%20Compose-0080FF)
@@ -55,7 +55,7 @@ Kernel inspection reconstructs the needed boot prefix from full-payload operatio
 
 - **Full A/B OTA:** raw `payload.bin`, or an OTA ZIP with a STORED `payload.bin`.
 - **Firmware ZIP images, Huawei UPDATE.APP and Honor/Huawei nested SD update packages:** image enumeration, per-image extraction, and a single streaming pass for images sharing an inner ZIP. Block-based OTA containers expose their data/list files; they are not automatically converted to reconstructed filesystem images.
-- **Parallel full-payload operations:** positioned reads and writes with bounded worker concurrency; `REPLACE`, `REPLACE_BZ`, `REPLACE_XZ`, `ZERO` and `DISCARD`. Known delta operations require old partition data and are not supported.
+- **Parallel full-payload operations:** positioned reads and writes with bounded worker concurrency; `REPLACE`, `REPLACE_BZ`, `REPLACE_XZ`, `ZERO` and `DISCARD`. Support is decided by each operation and its source references, not the manifest minor version alone. Self-contained partitions can be extracted at non-zero minor versions. Operations that actually require old partition data are rejected with their type and index.
 - **SHA-256 verification:** operation hashes when present, plus the optional final image hash. Invalid ranges or decoded lengths are rejected rather than marked complete.
 - **Resume:** completed operations are journaled with the exact manifest, partition and block-size identity. Unbound legacy journals, a different manifest, or a missing/truncated output image cannot skip writes. A replacement URL must serve an identical full manifest/operation layout before existing progress is reused.
 - Search/filter, per-image status, custom User-Agent, and English/Simplified Chinese localization.

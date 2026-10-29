@@ -40,6 +40,11 @@ async function main() {
     const port = await freePort();
     const executable = process.env.FLUX_TEST_APP || require('electron');
     const args = [`--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1', '--enable-logging=stderr', '--disable-gpu'];
+    // Local restricted runners may fail before Chromium starts; production and CI keep sandboxing.
+    if (process.env.FLUX_TEST_NO_SANDBOX === '1') {
+      assert(!process.env.CI, 'CI must verify the enabled Electron sandbox');
+      args.push('--no-sandbox');
+    }
     if (!process.env.FLUX_TEST_APP) args.push(root);
     const env = { ...process.env, FLUX_USER_DATA: profile, FLUX_TEST_HIDDEN: '1' };
     delete env.ELECTRON_RUN_AS_NODE;
@@ -79,7 +84,7 @@ async function main() {
     await page.waitForFunction(async () => (await window.flux.getState()).phase === 'ready');
     await noOverflow(page, '1440px parsed');
     await page.screenshot({ path: path.join(screenshots, 'pc-parsed.png') });
-    console.log('PASS Electron sandbox / real file drag-drop / parse / metadata / partition table');
+    console.log(`PASS Electron ${process.env.FLUX_TEST_NO_SANDBOX === '1' ? 'local diagnostic (sandbox bypass)' : 'sandbox'} / real file drag-drop / parse / metadata / partition table`);
 
     await page.type('input[aria-label="搜索分区"]', 'vendor');
     assert.equal(await page.$$eval('.partition-table tbody tr', rows => rows.length), 1);

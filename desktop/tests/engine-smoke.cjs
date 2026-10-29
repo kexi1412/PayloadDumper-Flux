@@ -63,6 +63,12 @@ async function main() {
     verifyFiles(finished.outputDir, fixtures.standard.expected);
     console.log('PASS local OTA / metadata / four partitions / SHA-256');
 
+    await parse({ kind: 'file', value: fixtures.selfContained.path });
+    finished = await extract();
+    assert(finished.partitions.every(p => p.extractState === 'DONE' && p.verifyState === 'PASSED'), JSON.stringify(finished));
+    verifyFiles(finished.outputDir, fixtures.selfContained.expected);
+    console.log('PASS non-zero minor / self-contained full partition / exact SHA-256');
+
     await parse({ kind: 'file', value: fixtures.raw.path });
     finished = await extract();
     assert(finished.partitions.every(p => p.extractState === 'DONE'), JSON.stringify(finished));
@@ -83,7 +89,7 @@ async function main() {
     finished = await extract();
     assert(finished.partitions.every(p => p.extractState === 'ERROR'));
     assert(!fs.existsSync(path.join(finished.outputDir, 'boot.img')));
-    console.log('PASS delta OTA rejected before output image creation');
+    console.log('PASS genuine SOURCE_COPY / minor zero / rejected before image creation');
 
     const agents = new Set();
     server = http.createServer((req, res) => {

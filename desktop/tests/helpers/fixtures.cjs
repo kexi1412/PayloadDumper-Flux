@@ -16,7 +16,7 @@ function varint(value) {
 }
 const integer = (field, value) => Buffer.concat([varint(field << 3), varint(value)]);
 const bytes = (field, value) => { const b = Buffer.isBuffer(value) ? value : Buffer.from(value); return Buffer.concat([varint((field << 3) | 2), varint(b.length), b]); };
-function payload({ names = ['boot', 'vendor_boot', 'dtbo', 'vbmeta'], blocks = 1, badHash = false, delta = false } = {}) {
+function payload({ names = ['boot', 'vendor_boot', 'dtbo', 'vbmeta'], blocks = 1, badHash = false, delta = false, minorVersion = 0 } = {}) {
   const parts = []; const blobs = []; const expected = {}; let offset = 0;
   for (const [index, name] of names.entries()) {
     const image = Buffer.alloc(4096 * blocks, index + 65);
@@ -26,13 +26,16 @@ function payload({ names = ['boot', 'vendor_boot', 'dtbo', 'vbmeta'], blocks = 1
     for (let block = 0; block < blocks; block++) {
       const chunk = image.subarray(block * 4096, (block + 1) * 4096);
       const extent = Buffer.concat([integer(1, block), integer(2, 1)]);
-      const operation = Buffer.concat([integer(1, 0), integer(2, offset), integer(3, chunk.length), bytes(6, extent), bytes(8, badHash ? Buffer.alloc(32) : sha(chunk))]);
-      operations.push(bytes(8, operation)); blobs.push(chunk); offset += chunk.length;
+      const operation = delta
+        ? Buffer.concat([integer(1, 4), bytes(4, extent), bytes(6, extent)]) // SOURCE_COPY genuinely needs old data.
+        : Buffer.concat([integer(1, 0), integer(2, offset), integer(3, chunk.length), bytes(6, extent), bytes(8, badHash ? Buffer.alloc(32) : sha(chunk))]);
+      operations.push(bytes(8, operation));
+      if (!delta) { blobs.push(chunk); offset += chunk.length; }
     }
     const info = Buffer.concat([integer(1, image.length), bytes(2, sha(image))]);
     parts.push(bytes(13, Buffer.concat([bytes(1, name), bytes(7, info), ...operations])));
   }
-  const manifest = Buffer.concat([integer(3, 4096), integer(12, delta ? 1 : 0), ...parts]);
+  const manifest = Buffer.concat([integer(3, 4096), integer(12, minorVersion), ...parts]);
   const header = Buffer.alloc(24); header.write('CrAU'); header.writeBigUInt64BE(2n, 4); header.writeBigUInt64BE(BigInt(manifest.length), 12);
   return { buffer: Buffer.concat([header, manifest, ...blobs]), expected };
 }
@@ -60,13 +63,14 @@ function ota(options) {
 function createFixtures(directory) {
   fs.mkdirSync(directory, { recursive: true });
   const standard = ota();
-  const large = ota({ names: ['system'], blocks: 64 });
+  const selfContained = ota({ names: ['boot'], blocks: 4, minorVersion: 9 });
+  const large = ota({ names: ['system'], blocks: 64, minorVersion: 9 });
   const bad = ota({ names: ['boot'], badHash: true });
   const delta = ota({ names: ['boot'], delta: true });
   const rawExpected = { 'boot.img': Buffer.alloc(8192, 31), 'vendor.img': Buffer.alloc(16384, 63) };
   const raw = zip([{ name: 'images/boot.img', data: rawExpected['boot.img'] }, { name: 'images/vendor.img', data: rawExpected['vendor.img'], method: 8 }]);
   const nested = zip([{ name: 'Software/dload/update_sd_base.zip', data: raw, method: 8 }]);
-  const fixtures = { standard, large, bad, delta, raw: { buffer: raw, expected: rawExpected }, nested: { buffer: nested, expected: rawExpected } };
+  const fixtures = { standard, selfContained, large, bad, delta, raw: { buffer: raw, expected: rawExpected }, nested: { buffer: nested, expected: rawExpected } };
   for (const [name, value] of Object.entries(fixtures)) { value.path = path.join(directory, `${name}-fixture.zip`); fs.writeFileSync(value.path, value.buffer); }
   return fixtures;
 }
