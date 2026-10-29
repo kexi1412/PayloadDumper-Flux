@@ -40,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -54,6 +55,7 @@ import com.flux.payload.dumper.core.Net
 import com.flux.payload.dumper.data.Preferences
 import com.flux.payload.dumper.ui.theme.FluxRadius
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
+import com.flux.payload.dumper.ui.theme.fluxOutlinedTextFieldColors
 
 private const val REPO_URL = "https://github.com/kexi1412/PayloadDumper-Flux"
 private const val UPDATER_URL = "https://github.com/YuKongA/Updater-KMP"
@@ -77,11 +79,13 @@ private fun FluxDialog(
             contentAlignment = Alignment.Center,
         ) {
             val availableHeight = maxHeight.coerceAtMost(632.dp)
+            // Only the outer window/corners are transparent, never the dialog body.
             Surface(
                 shape = RoundedCornerShape(FluxRadius.Dialog),
                 color = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface,
                 tonalElevation = 0.dp,
-                modifier = Modifier.widthIn(max = 392.dp).fillMaxWidth()
+                modifier = Modifier.testTag("flux_dialog_surface").widthIn(max = 392.dp).fillMaxWidth()
                     .heightIn(max = availableHeight),
             ) {
                 if (availableHeight < 280.dp) {
@@ -149,6 +153,7 @@ fun SettingsDialog(onDismiss: () -> Unit) {
                 label = { Text(stringResource(R.string.label_user_agent)) },
                 singleLine = true,
                 shape = RoundedCornerShape(FluxRadius.Field),
+                colors = fluxOutlinedTextFieldColors(containerColor = MaterialTheme.colorScheme.surface),
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -303,7 +308,8 @@ fun RelinkDialog(
             label = { Text(stringResource(R.string.relink_input_label)) },
             singleLine = true,
             shape = RoundedCornerShape(FluxRadius.Field),
-            modifier = Modifier.fillMaxWidth(),
+            colors = fluxOutlinedTextFieldColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth().testTag("relink_url_input"),
         )
     }
 }

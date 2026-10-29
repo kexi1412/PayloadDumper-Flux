@@ -3,6 +3,7 @@ package com.flux.payload.dumper.ui.theme
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 
 /**
  * Resource-backed COUI palette from com.android.settings 17.0.0.
@@ -46,7 +47,8 @@ val LightPrimary = Color(0xFF0080FF) // coui_color_primary_blue
 val LightOnPrimary = Color(0xFFFFFFFF) // coui_color_label_on_color
 val LightOnSurface = Color(0xE6000000)
 val LightOnSurfaceVariant = Color(0x8A000000)
-val LightOutline = Color(0x14000000)
+val LightOutline = Color(0x14000000) // decorative hairlines, not control boundaries
+val LightControlOutline = Color(0xFF747474)
 val LightError = Color(0xFFDB382C)
 
 val LightFlux = FluxColors(
@@ -75,18 +77,21 @@ val LightFlux = FluxColors(
 )
 
 val DarkBackground = Color(0xFF000000)
-val DarkSurface = Color(0xFF1E1E1E) // elevated surface; distinct from translucent card
+val DarkSurface = Color(0xFF1E1E1E) // opaque elevated surface for dialogs
 val DarkSurfaceVariant = Color(0xFF1E1E1E)
 val DarkPrimary = Color(0xFF1A8CFF)
 val DarkOnPrimary = Color(0xFFFFFFFF)
 val DarkOnSurface = Color(0xE6FFFFFF)
 val DarkOnSurfaceVariant = Color(0x8AFFFFFF)
-val DarkOutline = Color(0x26FFFFFF)
+val DarkOutline = Color(0x26FFFFFF) // decorative hairlines, not control boundaries
+val DarkControlOutline = Color(0xFF8A8A8A)
 val DarkError = Color(0xFFFF6C61)
 
 val DarkFlux = FluxColors(
-    card = Color(0x1AFFFFFF), // coui_color_card (night); preserve alpha composition
-    cardPressed = Color(0x33FFFFFF),
+    // OEM night tokens are overlays. Resolve them over the page background once:
+    // a standalone card must not depend on the content or window behind it.
+    card = Color(0x1AFFFFFF).compositeOver(DarkBackground),
+    cardPressed = Color(0x33FFFFFF).compositeOver(DarkBackground),
     cardOutline = DarkOutline,
     divider = Color(0x33FFFFFF),
     labelPrimary = DarkOnSurface,

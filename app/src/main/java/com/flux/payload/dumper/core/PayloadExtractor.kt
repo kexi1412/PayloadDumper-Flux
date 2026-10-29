@@ -119,22 +119,17 @@ class PayloadExtractor(private val workers: Int = defaultWorkers()) {
         val matching = payload.manifest.partitionsList.filter { it.partitionName == name }
         if (matching.size != 1 || matching.single() != partition) throw IOException("Partition does not match payload manifest")
         if (partition.operationsCount > ResumeState.MAX_OPERATIONS) throw IOException("Too many partition operations")
-        if (payload.manifest.minorVersion != 0) throw IOException("Partition '$name' needs incremental (delta) data; only full OTA packages are supported")
         if (source.size < 0 || payload.dataOffset < 0 || payload.dataOffset > source.size) throw IOException("Invalid payload data boundary")
 
-        // Reject delta ops across the WHOLE plan before any blob is read (even earlier REPLACEs).
-        for (op in partition.operationsList) {
+        // minor_version describes update_engine compatibility, not whether this partition
+        // can be reconstructed without an old image. Check the WHOLE operation plan first,
+        // including source references on otherwise self-contained REPLACE/ZERO operations.
+        for ((index, op) in partition.operationsList.withIndex()) {
             checkInterrupted()
-            if (!op.hasType()) throw IOException("Missing or unknown operation type")
-            when (op.type) {
-                InstallOperation.Type.SOURCE_COPY, InstallOperation.Type.SOURCE_BSDIFF,
-                InstallOperation.Type.BROTLI_BSDIFF, InstallOperation.Type.PUFFDIFF,
-                InstallOperation.Type.ZUCCHINI, InstallOperation.Type.LZ4DIFF_BSDIFF,
-                InstallOperation.Type.LZ4DIFF_PUFFDIFF, InstallOperation.Type.BSDIFF,
-                InstallOperation.Type.MOVE -> throw IOException("Partition '$name' needs incremental (delta) op ${op.type}; only full OTA packages are supported")
-                else -> Unit
+            PayloadOperations.unsupportedReason(op)?.let { reason ->
+                val type = if (op.hasType()) op.type.name else "unknown"
+                throw IOException("Partition '$name' operation[$index] ($type): $reason")
             }
-            if (op.srcExtentsCount != 0) throw IOException("Full OTA operation unexpectedly references source extents")
         }
 
         var allocSize = 0L
@@ -206,12 +201,7 @@ class PayloadExtractor(private val workers: Int = defaultWorkers()) {
             InstallOperation.Type.REPLACE -> blob
             InstallOperation.Type.REPLACE_BZ -> decodeBounded(BZip2CompressorInputStream(ByteArrayInputStream(blob), true), expected)
             InstallOperation.Type.REPLACE_XZ -> decodeBounded(XZCompressorInputStream(ByteArrayInputStream(blob), true, 128 * 1024), expected)
-            else -> when {
-                blob.startsWith(ZSTD_MAGIC) -> Decompressor.zstd(blob, expected)
-                blob.startsWith(XZ_MAGIC) -> decodeBounded(XZCompressorInputStream(ByteArrayInputStream(blob), true, 128 * 1024), expected)
-                blob.startsWith(BZ2_MAGIC) -> decodeBounded(BZip2CompressorInputStream(ByteArrayInputStream(blob), true), expected)
-                else -> throw IOException("Unsupported operation ${op.type}: no recognized compression magic")
-            }
+            else -> throw IOException("Unsupported operation ${op.type}")
         }
         if (decoded.size != expected) throw IOException("Decoded length ${decoded.size} does not match destination length $expected")
         // Only scatter a fully decoded, length-checked and hash-checked operation.
@@ -292,15 +282,11 @@ class PayloadExtractor(private val workers: Int = defaultWorkers()) {
     private fun checkInterrupted() {
         if (Thread.currentThread().isInterrupted) throw CancellationException("Extraction interrupted")
     }
-    private fun ByteArray.startsWith(prefix: ByteArray): Boolean = size >= prefix.size && prefix.indices.all { this[it] == prefix[it] }
 
     companion object {
         private const val MAX_OPERATION_BYTES = 128L * 1024 * 1024
         private const val IO_CHUNK = 1 shl 16
         private val PARTITION_NAME = Regex("[A-Za-z0-9_-]+")
-        private val XZ_MAGIC = byteArrayOf(0xFD.toByte(), 0x37, 0x7A, 0x58, 0x5A, 0)
-        private val BZ2_MAGIC = byteArrayOf(0x42, 0x5A, 0x68)
-        private val ZSTD_MAGIC = byteArrayOf(0x28, 0xB5.toByte(), 0x2F, 0xFD.toByte())
         fun defaultWorkers(): Int = Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
     }
 }

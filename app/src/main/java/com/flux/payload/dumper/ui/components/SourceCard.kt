@@ -20,7 +20,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +36,7 @@ import com.flux.payload.dumper.model.SourceMode
 import com.flux.payload.dumper.model.SourceSelection
 import com.flux.payload.dumper.ui.theme.FluxRadius
 import com.flux.payload.dumper.ui.theme.LocalFluxColors
+import com.flux.payload.dumper.ui.theme.fluxOutlinedTextFieldColors
 
 /** The local branch deliberately contains no text editor, even a read-only one. */
 @Composable
@@ -123,12 +123,7 @@ fun SourceCard(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
                     shape = RoundedCornerShape(FluxRadius.Field),
                     modifier = Modifier.fillMaxWidth().testTag("network_url_input"),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = flux.fieldBg,
-                        unfocusedContainerColor = flux.fieldBg,
-                        focusedIndicatorColor = flux.accent,
-                        unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                    ),
+                    colors = fluxOutlinedTextFieldColors(),
                 )
                 Spacer(Modifier.height(16.dp))
             }
